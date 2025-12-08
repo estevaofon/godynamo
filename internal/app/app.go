@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -137,10 +138,12 @@ type Model struct {
 	jsonViewer   *ui.JSONViewer
 	itemViewport viewport.Model
 
-	// Query
-	queryInput    textarea.Model
+	// Query/Filter
+	filterBuilder ui.FilterBuilder
 	queryMode     string // "scan" or "query"
 	filterExpr    string
+	filterNames   map[string]string
+	filterValues  map[string]interface{}
 
 	// Create/Edit item
 	itemEditor textarea.Model
@@ -180,7 +183,7 @@ func New() Model {
 
 	m.initConnectionForm()
 	m.initCreateTableForm()
-	m.initQueryInput()
+	m.initFilterBuilder()
 	m.initItemEditor()
 
 	m.tableList = ui.NewList("Tables", []string{})
@@ -260,12 +263,8 @@ func (m *Model) initCreateTableForm() {
 	}
 }
 
-func (m *Model) initQueryInput() {
-	ta := textarea.New()
-	ta.Placeholder = "Enter filter expression (e.g., attribute_exists(email))"
-	ta.SetHeight(3)
-	ta.SetWidth(60)
-	m.queryInput = ta
+func (m *Model) initFilterBuilder() {
+	m.filterBuilder = ui.NewFilterBuilder()
 	m.queryMode = "scan"
 }
 
@@ -457,12 +456,6 @@ func (m *Model) updateTables(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.view = viewCreateTable
 		m.createTableForm.inputs[0].Focus()
 		m.createTableForm.focusIndex = 0
-	case "d":
-		if m.tableList.GetSelected() != "" {
-			m.deleteTarget = m.tableList.GetSelected()
-			m.deleteType = "table"
-			m.view = viewConfirmDelete
-		}
 	case "r":
 		return m, m.loadTables()
 	case "q", "esc":
@@ -495,8 +488,8 @@ func (m *Model) updateTableData(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "e":
 		if m.dataTable.SelectedRow < len(m.items) {
 			m.selectedItem = m.items[m.dataTable.SelectedRow]
-			json, _ := models.ItemToJSON(m.selectedItem, true)
-			m.itemEditor.SetValue(json)
+			jsonStr, _ := models.ItemToJSON(m.selectedItem, true)
+			m.itemEditor.SetValue(jsonStr)
 			m.view = viewEditItem
 			m.itemEditor.Focus()
 		}
@@ -506,9 +499,33 @@ func (m *Model) updateTableData(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.deleteType = "item"
 			m.view = viewConfirmDelete
 		}
+	case "y":
+		// Copy selected cell value
+		row := m.dataTable.GetSelectedRow()
+		if row != nil && m.dataTable.SelectedCol < len(row) {
+			value := row[m.dataTable.SelectedCol]
+			if err := clipboard.WriteAll(value); err == nil {
+				m.statusMsg = "✓ Copied cell value to clipboard"
+			} else {
+				m.statusMsg = "✗ Failed to copy: " + err.Error()
+			}
+		}
+	case "Y":
+		// Copy entire row as JSON
+		if m.dataTable.SelectedRow < len(m.items) {
+			item := m.items[m.dataTable.SelectedRow]
+			jsonStr, err := models.ItemToJSON(item, true)
+			if err == nil {
+				if err := clipboard.WriteAll(jsonStr); err == nil {
+					m.statusMsg = "✓ Copied row as JSON to clipboard"
+				} else {
+					m.statusMsg = "✗ Failed to copy: " + err.Error()
+				}
+			}
+		}
 	case "f":
 		m.view = viewQuery
-		m.queryInput.Focus()
+		// FilterBuilder auto-focuses on init
 	case "x":
 		m.view = viewExport
 	case "pgdown", "ctrl+d":
@@ -523,6 +540,11 @@ func (m *Model) updateTableData(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.currentTable = ""
 		m.items = nil
 		m.lastKey = nil
+		// Clear filter when leaving table
+		m.filterBuilder.Clear()
+		m.filterExpr = ""
+		m.filterNames = nil
+		m.filterValues = nil
 	case "tab":
 		if m.focus == focusSidebar {
 			m.focus = focusContent
@@ -538,13 +560,23 @@ func (m *Model) updateItemDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "esc":
 		m.view = viewTableData
 	case "e":
-		json, _ := models.ItemToJSON(m.selectedItem, true)
-		m.itemEditor.SetValue(json)
+		jsonStr, _ := models.ItemToJSON(m.selectedItem, true)
+		m.itemEditor.SetValue(jsonStr)
 		m.view = viewEditItem
 		m.itemEditor.Focus()
 	case "d":
 		m.deleteType = "item"
 		m.view = viewConfirmDelete
+	case "y", "Y":
+		// Copy item as JSON
+		jsonStr, err := models.ItemToJSON(m.selectedItem, true)
+		if err == nil {
+			if err := clipboard.WriteAll(jsonStr); err == nil {
+				m.statusMsg = "✓ Copied item as JSON to clipboard"
+			} else {
+				m.statusMsg = "✗ Failed to copy: " + err.Error()
+			}
+		}
 	case "up", "k":
 		m.itemViewport.LineUp(1)
 	case "down", "j":
@@ -611,17 +643,47 @@ func (m *Model) updateQuery(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.view = viewTableData
-	case "ctrl+enter", "ctrl+e":
-		m.filterExpr = m.queryInput.Value()
-		m.view = viewTableData
-		m.lastKey = nil
-		return m, m.scanTable()
+	case "enter":
+		if m.filterBuilder.ActiveField == 1 {
+			// Confirm operator selection
+			m.filterBuilder.NextField()
+		} else {
+			// Execute filter
+			expr, names, values := m.filterBuilder.BuildExpression()
+			m.filterExpr = expr
+			m.filterNames = names
+			m.filterValues = values
+			m.view = viewTableData
+			m.lastKey = nil
+			return m, m.scanTable()
+		}
+	case "tab":
+		m.filterBuilder.NextField()
+	case "shift+tab":
+		m.filterBuilder.PrevField()
+	case "up":
+		if m.filterBuilder.ActiveField == 1 {
+			m.filterBuilder.PrevOperator()
+		} else {
+			m.filterBuilder.PrevCondition()
+		}
+	case "down":
+		if m.filterBuilder.ActiveField == 1 {
+			m.filterBuilder.NextOperator()
+		} else {
+			m.filterBuilder.NextCondition()
+		}
+	case "ctrl+a":
+		m.filterBuilder.AddCondition()
+	case "ctrl+d":
+		m.filterBuilder.RemoveCondition()
 	case "ctrl+c":
+		m.filterBuilder.Clear()
 		m.filterExpr = ""
-		m.queryInput.SetValue("")
+		m.filterNames = nil
+		m.filterValues = nil
 	default:
-		var cmd tea.Cmd
-		m.queryInput, cmd = m.queryInput.Update(msg)
+		cmd := m.filterBuilder.Update(msg)
 		return m, cmd
 	}
 	return m, nil
@@ -711,7 +773,7 @@ func (m *Model) describeTable() tea.Cmd {
 
 func (m *Model) scanTable() tea.Cmd {
 	return func() tea.Msg {
-		result, err := m.client.ScanTable(context.Background(), m.currentTable, m.pageSize, nil, m.filterExpr, nil)
+		result, err := m.client.ScanTable(context.Background(), m.currentTable, m.pageSize, nil, m.filterExpr, m.filterNames, m.filterValues)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -721,7 +783,7 @@ func (m *Model) scanTable() tea.Cmd {
 
 func (m *Model) scanTableNext() tea.Cmd {
 	return func() tea.Msg {
-		result, err := m.client.ScanTable(context.Background(), m.currentTable, m.pageSize, m.lastKey, m.filterExpr, nil)
+		result, err := m.client.ScanTable(context.Background(), m.currentTable, m.pageSize, m.lastKey, m.filterExpr, m.filterNames, m.filterValues)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -1053,7 +1115,6 @@ func (m Model) viewTables() string {
 		{Key: "↑/↓", Desc: "Navigate"},
 		{Key: "Enter", Desc: "Open"},
 		{Key: "c", Desc: "Create table"},
-		{Key: "d", Desc: "Delete table"},
 		{Key: "r", Desc: "Refresh"},
 		{Key: "q", Desc: "Back"},
 	})
@@ -1089,8 +1150,9 @@ func (m Model) viewTableData() string {
 
 	// Status bar
 	status := m.statusMsg
-	if m.filterExpr != "" {
-		status += ui.WarningStyle.Render(" | Filter: " + m.filterExpr)
+	filterSummary := m.filterBuilder.GetFilterSummary()
+	if filterSummary != "" {
+		status += ui.WarningStyle.Render(" | Filter: " + filterSummary)
 	}
 	if m.lastKey != nil {
 		status += ui.HelpStyle.Render(" | More items available (PgDown)")
@@ -1102,6 +1164,8 @@ func (m Model) viewTableData() string {
 	help := ui.RenderHelp([]ui.KeyBinding{
 		{Key: "↑↓←→", Desc: "Navigate"},
 		{Key: "Enter", Desc: "View"},
+		{Key: "y", Desc: "Copy cell"},
+		{Key: "Y", Desc: "Copy row"},
 		{Key: "n", Desc: "New"},
 		{Key: "e", Desc: "Edit"},
 		{Key: "d", Desc: "Delete"},
@@ -1126,6 +1190,7 @@ func (m Model) viewItemDetail() string {
 
 	help := ui.RenderHelp([]ui.KeyBinding{
 		{Key: "↑/↓", Desc: "Scroll"},
+		{Key: "y", Desc: "Copy JSON"},
 		{Key: "e", Desc: "Edit"},
 		{Key: "d", Desc: "Delete"},
 		{Key: "q/Esc", Desc: "Back"},
@@ -1212,20 +1277,15 @@ func (m Model) viewCreateTable() string {
 func (m Model) viewQuery() string {
 	var b strings.Builder
 
-	header := ui.TitleStyle.Render("Filter Expression")
-	b.WriteString(header)
-	b.WriteString("\n\n")
-
-	b.WriteString(ui.HelpStyle.Render("Enter a filter expression:"))
-	b.WriteString("\n")
-	b.WriteString(ui.HelpStyle.Render("Examples: attribute_exists(email), contains(name, \"john\"), age > :val"))
-	b.WriteString("\n\n")
-
-	b.WriteString(ui.InputFocusedStyle.Width(70).Render(m.queryInput.View()))
+	b.WriteString(m.filterBuilder.View())
 	b.WriteString("\n\n")
 
 	help := ui.RenderHelp([]ui.KeyBinding{
-		{Key: "Ctrl+Enter", Desc: "Execute"},
+		{Key: "Tab", Desc: "Next"},
+		{Key: "↑↓", Desc: "Operator"},
+		{Key: "Ctrl+A", Desc: "Add"},
+		{Key: "Ctrl+D", Desc: "Remove"},
+		{Key: "Enter", Desc: "Apply"},
 		{Key: "Ctrl+C", Desc: "Clear"},
 		{Key: "Esc", Desc: "Cancel"},
 	})

@@ -13,10 +13,10 @@ func main() {
 	model := app.New()
 
 	// Create the Bubble Tea program
+	// Note: Mouse capture is disabled to allow text selection in terminal
 	p := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
 
 	// Run the program

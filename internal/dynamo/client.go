@@ -184,7 +184,7 @@ type ScanResult struct {
 }
 
 // ScanTable performs a scan operation
-func (c *Client) ScanTable(ctx context.Context, tableName string, limit int32, startKey map[string]types.AttributeValue, filterExpression string, expressionValues map[string]types.AttributeValue) (*ScanResult, error) {
+func (c *Client) ScanTable(ctx context.Context, tableName string, limit int32, startKey map[string]types.AttributeValue, filterExpression string, expressionNames map[string]string, expressionValues map[string]interface{}) (*ScanResult, error) {
 	input := &dynamodb.ScanInput{
 		TableName: aws.String(tableName),
 		Limit:     aws.Int32(limit),
@@ -196,7 +196,18 @@ func (c *Client) ScanTable(ctx context.Context, tableName string, limit int32, s
 
 	if filterExpression != "" {
 		input.FilterExpression = aws.String(filterExpression)
-		input.ExpressionAttributeValues = expressionValues
+		
+		if len(expressionNames) > 0 {
+			input.ExpressionAttributeNames = expressionNames
+		}
+		
+		if len(expressionValues) > 0 {
+			attrValues := make(map[string]types.AttributeValue)
+			for k, v := range expressionValues {
+				attrValues[k] = interfaceToAttributeValue(v)
+			}
+			input.ExpressionAttributeValues = attrValues
+		}
 	}
 
 	output, err := c.db.Scan(ctx, input)
@@ -210,6 +221,24 @@ func (c *Client) ScanTable(ctx context.Context, tableName string, limit int32, s
 		Count:            output.Count,
 		ScannedCount:     output.ScannedCount,
 	}, nil
+}
+
+// interfaceToAttributeValue converts a Go interface to DynamoDB AttributeValue
+func interfaceToAttributeValue(v interface{}) types.AttributeValue {
+	switch val := v.(type) {
+	case string:
+		return &types.AttributeValueMemberS{Value: val}
+	case int:
+		return &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", val)}
+	case int64:
+		return &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", val)}
+	case float64:
+		return &types.AttributeValueMemberN{Value: fmt.Sprintf("%v", val)}
+	case bool:
+		return &types.AttributeValueMemberBOOL{Value: val}
+	default:
+		return &types.AttributeValueMemberS{Value: fmt.Sprintf("%v", val)}
+	}
 }
 
 // QueryInput contains query parameters
