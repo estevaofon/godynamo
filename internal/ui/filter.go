@@ -69,22 +69,31 @@ func NewFilterBuilder() FilterBuilder {
 		Conditions:    []FilterCondition{},
 		ActiveCondIdx: 0,
 		ActiveField:   0,
-		Width:         70,
+		Width:         120,
 		Height:        20,
 	}
 	fb.AddCondition()
 	return fb
 }
 
+// SetWidth sets the width of the filter builder
+func (f *FilterBuilder) SetWidth(width int) {
+	f.Width = width
+}
+
 // AddCondition adds a new filter condition
 func (f *FilterBuilder) AddCondition() {
 	nameInput := textinput.New()
-	nameInput.Placeholder = "Attribute name"
-	nameInput.Width = 20
+	nameInput.Placeholder = "attribute"
+	nameInput.Width = 22
+	nameInput.Prompt = ""
+	nameInput.CharLimit = 50
 
 	valueInput := textinput.New()
-	valueInput.Placeholder = "Value"
-	valueInput.Width = 25
+	valueInput.Placeholder = "value"
+	valueInput.Width = 26
+	valueInput.Prompt = ""
+	valueInput.CharLimit = 100
 
 	if len(f.Conditions) == 0 {
 		nameInput.Focus()
@@ -399,8 +408,15 @@ func (f *FilterBuilder) View() string {
 	b.WriteString("\n\n")
 
 	// Instructions
-	b.WriteString(HelpStyle.Render("Tab: Next field │ ↑↓: Change operator │ Ctrl+A: Add condition │ Ctrl+D: Remove"))
+	b.WriteString(HelpStyle.Render("Tab: Next │ ↑↓: Operator │ Ctrl+A: Add │ Ctrl+D: Remove │ Enter: Apply"))
 	b.WriteString("\n\n")
+
+	// Labels row
+	b.WriteString("   ")
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorTextMuted).Width(26).Render("Attribute Name"))
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorTextMuted).Width(20).Render("Operator"))
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorTextMuted).Width(30).Render("Value"))
+	b.WriteString("\n")
 
 	// Conditions
 	for i, cond := range f.Conditions {
@@ -409,40 +425,51 @@ func (f *FilterBuilder) View() string {
 		// Row number
 		rowNum := fmt.Sprintf("%d.", i+1)
 		if isActive {
-			b.WriteString(SelectedStyle.Render(rowNum))
+			b.WriteString(lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Width(3).Render(rowNum))
 		} else {
-			b.WriteString(HelpStyle.Render(rowNum))
+			b.WriteString(lipgloss.NewStyle().Foreground(ColorTextMuted).Width(3).Render(rowNum))
 		}
-		b.WriteString(" ")
 
 		// Attribute Name
-		nameStyle := InputStyle.Width(22)
+		nameContent := cond.AttributeName.View()
+		nameStyle := lipgloss.NewStyle().Width(25)
 		if isActive && f.ActiveField == 0 {
-			nameStyle = InputFocusedStyle.Width(22)
+			nameStyle = nameStyle.Foreground(ColorPrimary)
 		}
-		b.WriteString(nameStyle.Render(cond.AttributeName.View()))
+		b.WriteString(nameStyle.Render(nameContent))
 		b.WriteString(" ")
 
 		// Operator
 		opInfo := FilterOperators[cond.Operator]
-		opLabel := fmt.Sprintf(" %s %s ", opInfo.Sym, opInfo.Label)
-		
+		opLabel := fmt.Sprintf("%s %-14s", opInfo.Sym, opInfo.Label)
 		if isActive && f.ActiveField == 1 {
-			b.WriteString(ButtonFocusedStyle.Render(opLabel))
+			b.WriteString(lipgloss.NewStyle().
+				Foreground(ColorBg).
+				Background(ColorSecondary).
+				Bold(true).
+				Padding(0, 1).
+				Render(opLabel))
 		} else {
-			b.WriteString(BadgeStyle.Render(opLabel))
+			b.WriteString(lipgloss.NewStyle().
+				Foreground(ColorSecondary).
+				Padding(0, 1).
+				Render(opLabel))
 		}
 		b.WriteString(" ")
 
 		// Attribute Value (only if operator needs it)
 		if cond.Operator != OpExists && cond.Operator != OpNotExists {
-			valueStyle := InputStyle.Width(25)
+			valContent := cond.AttributeValue.View()
+			valStyle := lipgloss.NewStyle().Width(30)
 			if isActive && f.ActiveField == 2 {
-				valueStyle = InputFocusedStyle.Width(25)
+				valStyle = valStyle.Foreground(ColorPrimary)
 			}
-			b.WriteString(valueStyle.Render(cond.AttributeValue.View()))
+			b.WriteString(valStyle.Render(valContent))
 		} else {
-			b.WriteString(HelpStyle.Render("(no value needed)"))
+			b.WriteString(lipgloss.NewStyle().
+				Foreground(ColorTextMuted).
+				Italic(true).
+				Render("(no value needed)"))
 		}
 
 		b.WriteString("\n")
@@ -451,19 +478,17 @@ func (f *FilterBuilder) View() string {
 		if isActive && f.ActiveField == 1 && f.OperatorOpen {
 			b.WriteString(f.renderOperatorDropdown(cond.Operator))
 		}
-
-		b.WriteString("\n")
 	}
 
 	// Preview
 	expr, _, _ := f.BuildExpression()
 	if expr != "" {
 		b.WriteString("\n")
-		b.WriteString(HelpStyle.Render("Expression: "))
+		b.WriteString(HelpStyle.Render("Filter: "))
 		b.WriteString(JSONStringStyle.Render(expr))
 	}
 
-	return ContentStyle.Width(f.Width).Render(b.String())
+	return b.String()
 }
 
 func (f *FilterBuilder) renderOperatorDropdown(current FilterOperator) string {

@@ -2,6 +2,7 @@ package dynamo
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -96,6 +97,7 @@ type TableInfo struct {
 	SortKeyType    string
 	GSIs           []IndexInfo
 	LSIs           []IndexInfo
+	RawJSON        string // Full JSON response from DescribeTable
 }
 
 // IndexInfo contains index metadata
@@ -115,11 +117,15 @@ func (c *Client) DescribeTable(ctx context.Context, tableName string) (*TableInf
 		return nil, fmt.Errorf("failed to describe table: %w", err)
 	}
 
+	// Generate raw JSON from the Table response
+	rawJSON, _ := json.MarshalIndent(output.Table, "", "  ")
+
 	info := &TableInfo{
 		Name:      *output.Table.TableName,
 		Status:    string(output.Table.TableStatus),
 		ItemCount: *output.Table.ItemCount,
 		SizeBytes: *output.Table.TableSizeBytes,
+		RawJSON:   string(rawJSON),
 	}
 
 	// Get key schema

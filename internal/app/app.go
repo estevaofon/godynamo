@@ -90,6 +90,7 @@ const (
 	viewQuery
 	viewConfirmDelete
 	viewExport
+	viewSchema
 )
 
 // Focus areas
@@ -326,6 +327,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateConfirmDelete(msg)
 		case viewExport:
 			return m.updateExport(msg)
+		case viewSchema:
+			return m.updateSchema(msg)
 		}
 
 	case errMsg:
@@ -526,6 +529,9 @@ func (m *Model) updateTableData(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f":
 		m.view = viewQuery
 		// FilterBuilder auto-focuses on init
+	case "s":
+		m.prepareSchemaView()
+		m.view = viewSchema
 	case "x":
 		m.view = viewExport
 	case "pgdown", "ctrl+d":
@@ -1023,6 +1029,8 @@ func (m Model) View() string {
 		return m.viewConfirmDelete()
 	case viewExport:
 		return m.viewExport()
+	case viewSchema:
+		return m.viewSchema()
 	}
 
 	return ""
@@ -1164,12 +1172,12 @@ func (m Model) viewTableData() string {
 	help := ui.RenderHelp([]ui.KeyBinding{
 		{Key: "↑↓←→", Desc: "Navigate"},
 		{Key: "Enter", Desc: "View"},
-		{Key: "y", Desc: "Copy cell"},
-		{Key: "Y", Desc: "Copy row"},
+		{Key: "y/Y", Desc: "Copy"},
 		{Key: "n", Desc: "New"},
 		{Key: "e", Desc: "Edit"},
 		{Key: "d", Desc: "Delete"},
 		{Key: "f", Desc: "Filter"},
+		{Key: "s", Desc: "Schema"},
 		{Key: "x", Desc: "Export"},
 		{Key: "q", Desc: "Back"},
 	})
@@ -1329,5 +1337,104 @@ func (m Model) viewExport() string {
 	b.WriteString(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content))
 
 	return b.String()
+}
+
+func (m *Model) updateSchema(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc":
+		m.view = viewTableData
+	case "y":
+		// Copy schema as JSON
+		if m.tableInfo != nil && m.tableInfo.RawJSON != "" {
+			if err := clipboard.WriteAll(m.tableInfo.RawJSON); err == nil {
+				m.statusMsg = "✓ Copied schema to clipboard"
+			}
+		}
+	case "up", "k":
+		m.itemViewport.LineUp(3)
+	case "down", "j":
+		m.itemViewport.LineDown(3)
+	case "pgup":
+		m.itemViewport.HalfViewUp()
+	case "pgdown":
+		m.itemViewport.HalfViewDown()
+	}
+	return m, nil
+}
+
+func (m *Model) prepareSchemaView() {
+	if m.tableInfo == nil || m.tableInfo.RawJSON == "" {
+		return
+	}
+
+	// Parse the JSON to get syntax highlighting
+	var data interface{}
+	json.Unmarshal([]byte(m.tableInfo.RawJSON), &data)
+	
+	viewer := ui.NewJSONViewer(data)
+	content := viewer.Render()
+	m.itemViewport.SetContent(content)
+}
+
+func (m Model) viewSchema() string {
+	var b strings.Builder
+
+	// Title
+	b.WriteString(ui.TitleStyle.Render("📋 Table Schema: " + m.currentTable))
+	b.WriteString("\n\n")
+
+	if m.tableInfo == nil {
+		b.WriteString(ui.ErrorStyle.Render("Schema not loaded"))
+		return b.String()
+	}
+
+	// Quick info header
+	quickInfo := fmt.Sprintf("Status: %s │ Items: %d │ Size: %s",
+		m.tableInfo.Status,
+		m.tableInfo.ItemCount,
+		formatBytes(m.tableInfo.SizeBytes))
+	b.WriteString(ui.HelpStyle.Render(quickInfo))
+	b.WriteString("\n\n")
+
+	// JSON content in viewport
+	schemaStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ui.ColorPrimary).
+		Padding(0, 1).
+		Width(m.width - 10).
+		Height(m.height - 12)
+
+	b.WriteString(schemaStyle.Render(m.itemViewport.View()))
+	b.WriteString("\n\n")
+
+	// Help
+	help := ui.RenderHelp([]ui.KeyBinding{
+		{Key: "↑/↓", Desc: "Scroll"},
+		{Key: "PgUp/PgDn", Desc: "Page"},
+		{Key: "y", Desc: "Copy JSON"},
+		{Key: "q/Esc", Desc: "Back"},
+	})
+	b.WriteString(help)
+
+	return b.String()
+}
+
+func formatBytes(bytes int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.2f GB", float64(bytes)/float64(GB))
+	case bytes >= MB:
+		return fmt.Sprintf("%.2f MB", float64(bytes)/float64(MB))
+	case bytes >= KB:
+		return fmt.Sprintf("%.2f KB", float64(bytes)/float64(KB))
+	default:
+		return fmt.Sprintf("%d bytes", bytes)
+	}
 }
 

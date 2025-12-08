@@ -137,10 +137,13 @@ func (t *DataTable) View() string {
 
 	var b strings.Builder
 
+	// Fixed width for row number column
+	const rowNumWidth = 6
+
 	// Render header
 	var headerCells []string
 	if t.ShowRowNums {
-		headerCells = append(headerCells, TableHeaderStyle.Render("#"))
+		headerCells = append(headerCells, TableHeaderStyle.Width(rowNumWidth).Render("#"))
 	}
 	for i, h := range t.Headers {
 		width := t.ColWidths[i]
@@ -171,7 +174,7 @@ func (t *DataTable) View() string {
 			if rowIdx == t.SelectedRow && t.FocusEnabled {
 				numStyle = TableCellSelectedStyle
 			}
-			cells = append(cells, numStyle.Width(4).Render(fmt.Sprintf("%d", rowIdx+1)))
+			cells = append(cells, numStyle.Width(rowNumWidth).Render(fmt.Sprintf("%d", rowIdx+1)))
 		}
 
 		for colIdx, cell := range row {
