@@ -11,16 +11,17 @@ import (
 
 // DataTable component for displaying tabular data
 type DataTable struct {
-	Headers      []string
-	Rows         [][]string
-	SelectedRow  int
-	SelectedCol  int
-	Offset       int
-	Width        int
-	Height       int
-	ColWidths    []int
-	ShowRowNums  bool
-	FocusEnabled bool
+	Headers       []string
+	Rows          [][]string
+	SelectedRow   int
+	SelectedCol   int
+	Offset        int
+	HorizontalOff int // Horizontal scroll offset (column index)
+	Width         int
+	Height        int
+	ColWidths     []int
+	ShowRowNums   bool
+	FocusEnabled  bool
 }
 
 // NewDataTable creates a new DataTable
@@ -50,6 +51,7 @@ func (t *DataTable) SetData(headers []string, rows [][]string) {
 	t.SelectedRow = 0
 	t.SelectedCol = 0
 	t.Offset = 0
+	t.HorizontalOff = 0
 	t.calculateColWidths()
 }
 
@@ -107,17 +109,26 @@ func (t *DataTable) MoveDown() {
 	}
 }
 
-// MoveLeft moves selection left
+// MoveLeft moves selection left and scrolls if needed
 func (t *DataTable) MoveLeft() {
 	if t.SelectedCol > 0 {
 		t.SelectedCol--
+		// Scroll left immediately when selected column goes before visible area
+		if t.SelectedCol < t.HorizontalOff {
+			t.HorizontalOff = t.SelectedCol
+		}
 	}
 }
 
-// MoveRight moves selection right
+// MoveRight moves selection right and scrolls if needed
 func (t *DataTable) MoveRight() {
 	if t.SelectedCol < len(t.Headers)-1 {
 		t.SelectedCol++
+		// Scroll right immediately - move view with selection
+		maxVisible := 4 // Show max 4 columns at a time for responsiveness
+		if t.SelectedCol >= t.HorizontalOff+maxVisible {
+			t.HorizontalOff = t.SelectedCol - maxVisible + 1
+		}
 	}
 }
 
@@ -140,17 +151,73 @@ func (t *DataTable) View() string {
 	// Fixed width for row number column
 	const rowNumWidth = 6
 
+	// Ensure HorizontalOff is valid
+	if t.HorizontalOff < 0 {
+		t.HorizontalOff = 0
+	}
+	if t.HorizontalOff >= len(t.Headers) {
+		t.HorizontalOff = len(t.Headers) - 1
+	}
+
+	// Ensure selected column is visible - this is the key fix!
+	if t.SelectedCol < t.HorizontalOff {
+		t.HorizontalOff = t.SelectedCol
+	}
+
+	// Use selected column as the starting point for visibility
+	startCol := t.HorizontalOff
+	
+	// Calculate how many columns we can show
+	availableWidth := t.Width - 15
+	if t.ShowRowNums {
+		availableWidth -= rowNumWidth
+	}
+
+	// Count columns that fit
+	endCol := startCol
+	usedWidth := 0
+
+	for i := startCol; i < len(t.Headers) && i < len(t.ColWidths); i++ {
+		colWidth := t.ColWidths[i] + 3
+		if usedWidth+colWidth > availableWidth && i > startCol {
+			break
+		}
+		usedWidth += colWidth
+		endCol = i + 1
+	}
+	
+	// Make sure selected column is in visible range
+	if t.SelectedCol >= endCol && endCol < len(t.Headers) {
+		// Shift view to show selected column
+		startCol = t.SelectedCol
+		endCol = startCol + 1
+		t.HorizontalOff = startCol
+	}
+
 	// Render header
 	var headerCells []string
 	if t.ShowRowNums {
 		headerCells = append(headerCells, TableHeaderStyle.Width(rowNumWidth).Render("#"))
 	}
-	for i, h := range t.Headers {
+	
+	// Show scroll indicator if there are columns to the left
+	if startCol > 0 {
+		headerCells = append(headerCells, TableHeaderStyle.Width(2).Render("◀"))
+	}
+
+	for i := startCol; i < endCol; i++ {
+		h := t.Headers[i]
 		width := t.ColWidths[i]
 		if width > 0 {
 			headerCells = append(headerCells, TableHeaderStyle.Width(width+2).Render(Truncate(h, width)))
 		}
 	}
+
+	// Show scroll indicator if there are columns to the right
+	if endCol < len(t.Headers) {
+		headerCells = append(headerCells, TableHeaderStyle.Width(2).Render("▶"))
+	}
+
 	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, headerCells...))
 	b.WriteString("\n")
 
@@ -177,7 +244,20 @@ func (t *DataTable) View() string {
 			cells = append(cells, numStyle.Width(rowNumWidth).Render(fmt.Sprintf("%d", rowIdx+1)))
 		}
 
-		for colIdx, cell := range row {
+		// Show scroll indicator for left
+		if startCol > 0 {
+			style := TableCellStyle
+			if rowIdx == t.SelectedRow && t.FocusEnabled {
+				style = TableCellSelectedStyle
+			}
+			cells = append(cells, style.Width(2).Render("◀"))
+		}
+
+		for colIdx := startCol; colIdx < endCol; colIdx++ {
+			cell := ""
+			if colIdx < len(row) {
+				cell = row[colIdx]
+			}
 			if colIdx >= len(t.ColWidths) {
 				break
 			}
@@ -191,6 +271,15 @@ func (t *DataTable) View() string {
 				}
 			}
 			cells = append(cells, style.Width(width+2).Render(Truncate(cell, width)))
+		}
+
+		// Show scroll indicator for right
+		if endCol < len(t.Headers) {
+			style := TableCellStyle
+			if rowIdx == t.SelectedRow && t.FocusEnabled {
+				style = TableCellSelectedStyle
+			}
+			cells = append(cells, style.Width(2).Render("▶"))
 		}
 
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, cells...))

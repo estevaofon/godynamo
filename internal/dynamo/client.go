@@ -370,7 +370,7 @@ type QueryInput struct {
 	KeyConditionExpression   string
 	FilterExpression         string
 	ExpressionAttributeNames map[string]string
-	ExpressionValues         map[string]types.AttributeValue
+	ExpressionValues         map[string]interface{}
 	Limit                    int32
 	ScanIndexForward         bool
 	StartKey                 map[string]types.AttributeValue
@@ -387,10 +387,18 @@ type QueryResult struct {
 // QueryTable performs a query operation
 func (c *Client) QueryTable(ctx context.Context, input QueryInput) (*QueryResult, error) {
 	queryInput := &dynamodb.QueryInput{
-		TableName:                 aws.String(input.TableName),
-		KeyConditionExpression:    aws.String(input.KeyConditionExpression),
-		ExpressionAttributeValues: input.ExpressionValues,
-		ScanIndexForward:          aws.Bool(input.ScanIndexForward),
+		TableName:              aws.String(input.TableName),
+		KeyConditionExpression: aws.String(input.KeyConditionExpression),
+		ScanIndexForward:       aws.Bool(input.ScanIndexForward),
+	}
+
+	// Convert expression values
+	if len(input.ExpressionValues) > 0 {
+		attrValues := make(map[string]types.AttributeValue)
+		for k, v := range input.ExpressionValues {
+			attrValues[k] = interfaceToAttributeValue(v)
+		}
+		queryInput.ExpressionAttributeValues = attrValues
 	}
 
 	if input.IndexName != "" {

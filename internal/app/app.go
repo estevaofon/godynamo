@@ -137,10 +137,13 @@ type Model struct {
 	height int
 
 	// Tables
-	tables       []string
-	tableList    ui.List
-	currentTable string
-	tableInfo    *dynamo.TableInfo
+	tables          []string
+	filteredTables  []string
+	tableFilter     string
+	tableFilterMode bool
+	tableList       ui.List
+	currentTable    string
+	tableInfo       *dynamo.TableInfo
 
 	// Data view
 	dataTable    ui.DataTable
@@ -292,9 +295,10 @@ func (m *Model) initItemEditor() {
   "id": "123",
   "name": "Example"
 }`
-	ta.SetHeight(15)
-	ta.SetWidth(70)
+	ta.SetHeight(30)
+	ta.SetWidth(100)
 	ta.ShowLineNumbers = true
+	ta.CharLimit = 0 // No limit
 	m.itemEditor = ta
 }
 
@@ -315,6 +319,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tableList.Height = msg.Height - 10
 		m.itemViewport.Width = msg.Width - 40
 		m.itemViewport.Height = msg.Height - 15
+		// Resize item editor based on window
+		m.itemEditor.SetWidth(msg.Width - 20)
+		m.itemEditor.SetHeight(msg.Height - 12)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -358,6 +365,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tablesLoadedMsg:
 		m.tables = msg.tables
+		m.filteredTables = msg.tables
+		m.tableFilter = ""
+		m.tableFilterMode = false
 		m.tableList.SetItems(msg.tables)
 		m.loading = false
 		m.view = viewTables
@@ -517,14 +527,52 @@ func (m *Model) updateTables(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Handle filter mode (fuzzy finder)
+	if m.tableFilterMode {
+		switch msg.String() {
+		case "esc":
+			m.tableFilterMode = false
+			m.tableFilter = ""
+			m.applyTableFilter()
+		case "enter":
+			m.tableFilterMode = false
+			// Select current item
+			if m.tableList.Selected >= 0 && m.tableList.Selected < len(m.filteredTables) {
+				m.currentTable = m.filteredTables[m.tableList.Selected]
+				m.loading = true
+				m.view = viewTableData
+				return m, tea.Batch(m.describeTable(), m.scanTable())
+			}
+		case "up", "ctrl+p":
+			m.tableList.MoveUp()
+		case "down", "ctrl+n":
+			m.tableList.MoveDown()
+		case "backspace":
+			if len(m.tableFilter) > 0 {
+				m.tableFilter = m.tableFilter[:len(m.tableFilter)-1]
+				m.applyTableFilter()
+			}
+		case "ctrl+u":
+			m.tableFilter = ""
+			m.applyTableFilter()
+		default:
+			// Add character to filter
+			if len(msg.String()) == 1 {
+				m.tableFilter += msg.String()
+				m.applyTableFilter()
+			}
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "up", "k":
 		m.tableList.MoveUp()
 	case "down", "j":
 		m.tableList.MoveDown()
 	case "enter":
-		m.currentTable = m.tableList.GetSelected()
-		if m.currentTable != "" {
+		if m.tableList.Selected >= 0 && m.tableList.Selected < len(m.filteredTables) {
+			m.currentTable = m.filteredTables[m.tableList.Selected]
 			m.loading = true
 			m.view = viewTableData
 			return m, tea.Batch(m.describeTable(), m.scanTable())
@@ -535,15 +583,45 @@ func (m *Model) updateTables(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.createTableForm.focusIndex = 0
 	case "r":
 		return m, m.loadTables()
+	case "/":
+		// Enter filter mode
+		m.tableFilterMode = true
+		m.tableFilter = ""
 	case "tab":
 		// Toggle region dropdown if multiple regions
 		if len(m.discoveredRegions) > 1 {
 			m.regionDropdownOpen = !m.regionDropdownOpen
 		}
 	case "q", "esc":
-		m.view = viewConnect
+		if m.tableFilter != "" {
+			m.tableFilter = ""
+			m.applyTableFilter()
+		} else {
+			m.view = viewConnect
+		}
+	default:
+		// Quick filter: start typing to filter
+		if len(msg.String()) == 1 && msg.String() != " " {
+			m.tableFilterMode = true
+			m.tableFilter = msg.String()
+			m.applyTableFilter()
+		}
 	}
 	return m, nil
+}
+
+func (m *Model) applyTableFilter() {
+	if m.tableFilter == "" {
+		m.filteredTables = m.tables
+	} else {
+		matches := ui.FuzzyFind(m.tableFilter, m.tables)
+		m.filteredTables = make([]string, len(matches))
+		for i, match := range matches {
+			m.filteredTables[i] = match.Text
+		}
+	}
+	m.tableList.SetItems(m.filteredTables)
+	m.tableList.Selected = 0
 }
 
 func (m *Model) updateTableData(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -552,10 +630,38 @@ func (m *Model) updateTableData(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.dataTable.MoveUp()
 	case "down", "j":
 		m.dataTable.MoveDown()
-	case "left", "h":
+	case "left", "h", "[":
 		m.dataTable.MoveLeft()
-	case "right", "l":
+		return m, nil
+	case "right", "l", "]":
 		m.dataTable.MoveRight()
+		return m, nil
+	case "H", "{":
+		// Fast scroll left - move 3 columns
+		for i := 0; i < 3; i++ {
+			m.dataTable.MoveLeft()
+		}
+		return m, nil
+	case "L", "}":
+		// Fast scroll right - move 3 columns
+		for i := 0; i < 3; i++ {
+			m.dataTable.MoveRight()
+		}
+		return m, nil
+	case "home", "0", "^":
+		// Go to first column
+		m.dataTable.SelectedCol = 0
+		m.dataTable.HorizontalOff = 0
+		return m, nil
+	case "end", "$":
+		// Go to last column
+		if len(m.dataTable.Headers) > 0 {
+			m.dataTable.SelectedCol = len(m.dataTable.Headers) - 1
+			if m.dataTable.SelectedCol > 3 {
+				m.dataTable.HorizontalOff = m.dataTable.SelectedCol - 3
+			}
+		}
+		return m, nil
 	case "enter":
 		row := m.dataTable.GetSelectedRow()
 		if row != nil && m.dataTable.SelectedRow < len(m.items) {
@@ -908,6 +1014,36 @@ func (m *Model) describeTable() tea.Cmd {
 
 func (m *Model) scanTable() tea.Cmd {
 	return func() tea.Msg {
+		// Check if we're filtering by partition key - use Query instead
+		if m.tableInfo != nil && m.filterExpr != "" && m.filterValues != nil {
+			// Check if any filter is on the partition key with equals
+			for placeholder, value := range m.filterValues {
+				if attrName, ok := m.filterNames["#attr0"]; ok && attrName == m.tableInfo.PartitionKey {
+					// Use Query for partition key lookup
+					keyCondition := fmt.Sprintf("#pk = %s", placeholder)
+					
+					queryInput := dynamo.QueryInput{
+						TableName:              m.currentTable,
+						KeyConditionExpression: keyCondition,
+						ExpressionAttributeNames: map[string]string{
+							"#pk": m.tableInfo.PartitionKey,
+						},
+						ExpressionValues: map[string]interface{}{
+							placeholder: value,
+						},
+						Limit:            m.pageSize,
+						ScanIndexForward: true,
+					}
+
+					result, err := m.client.QueryTable(context.Background(), queryInput)
+					if err != nil {
+						return errMsg{err}
+					}
+					return queryResultMsg{result}
+				}
+			}
+		}
+
 		result, err := m.client.ScanTable(context.Background(), m.currentTable, m.pageSize, nil, m.filterExpr, m.filterNames, m.filterValues)
 		if err != nil {
 			return errMsg{err}
@@ -1307,7 +1443,8 @@ func (m Model) viewTables() string {
 
 	// Region dropdown (if multiple regions)
 	if len(m.discoveredRegions) > 1 {
-		b.WriteString(ui.HelpStyle.Render("Region: "))
+		b.WriteString(ui.HelpStyle.Render("Region:"))
+		b.WriteString("\n")
 		
 		// Current region button
 		regionLabel := fmt.Sprintf(" 🌍 %s (%d tables) ▼ ", 
@@ -1319,15 +1456,14 @@ func (m Model) viewTables() string {
 		} else {
 			b.WriteString(ui.ButtonStyle.Render(regionLabel))
 		}
-		b.WriteString("\n")
 
 		// Dropdown list
 		if m.regionDropdownOpen {
+			b.WriteString("\n")
 			dropdownStyle := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(ui.ColorPrimary).
-				Padding(0, 1).
-				MarginLeft(8)
+				Padding(0, 1)
 
 			var dropdownContent strings.Builder
 			for i, region := range m.discoveredRegions {
@@ -1342,43 +1478,128 @@ func (m Model) viewTables() string {
 				}
 			}
 			b.WriteString(dropdownStyle.Render(dropdownContent.String()))
-			b.WriteString("\n")
 		}
-		b.WriteString("\n")
 	} else if m.selectedRegion != "" {
 		// Single region, just show it
 		b.WriteString(ui.HelpStyle.Render("Region: "))
 		b.WriteString(ui.BadgeStyle.Render(" 🌍 " + m.selectedRegion + " "))
-		b.WriteString("\n\n")
+	}
+	b.WriteString("\n\n")
+
+	// Search/Filter box  
+	searchIcon := "🔍 "
+	searchContent := m.tableFilter
+	
+	searchBoxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(0, 1).
+		Width(45)
+
+	if m.tableFilterMode {
+		searchBoxStyle = searchBoxStyle.BorderForeground(ui.ColorPrimary)
+	} else {
+		searchBoxStyle = searchBoxStyle.BorderForeground(ui.ColorTextMuted)
 	}
 
-	// Table list
-	m.tableList.Width = m.width - 4
-	content := m.tableList.View()
-
-	if len(m.tables) == 0 {
-		content = ui.ContentStyle.Width(m.width - 4).Render("No tables found. Press 'c' to create one.")
+	var searchText string
+	if searchContent == "" {
+		if m.tableFilterMode {
+			searchText = searchIcon + "Type to search..."
+		} else {
+			searchText = searchIcon + "Press / or type to search"
+		}
+		b.WriteString(searchBoxStyle.Foreground(ui.ColorTextMuted).Render(searchText))
+	} else {
+		b.WriteString(searchBoxStyle.Render(searchIcon + searchContent + "▌"))
 	}
 
-	b.WriteString(content)
+	// Show filter results count
+	if m.tableFilter != "" {
+		b.WriteString("  ")
+		b.WriteString(ui.HelpStyle.Render(fmt.Sprintf("%d/%d tables", len(m.filteredTables), len(m.tables))))
+	}
+	b.WriteString("\n\n")
+
+	// Table list with fuzzy highlighting
+	listStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ui.ColorPrimary).
+		Padding(1, 2).
+		Width(m.width - 6).
+		Height(m.height - 18)
+
+	var listContent strings.Builder
+	
+	if len(m.filteredTables) == 0 {
+		if len(m.tables) == 0 {
+			listContent.WriteString(ui.HelpStyle.Render("No tables found. Press 'c' to create one."))
+		} else {
+			listContent.WriteString(ui.HelpStyle.Render("No tables match your search."))
+		}
+	} else {
+		// Get fuzzy matches for highlighting
+		matches := ui.FuzzyFind(m.tableFilter, m.filteredTables)
+		matchMap := make(map[string][]int)
+		for _, match := range matches {
+			matchMap[match.Text] = match.MatchedIdx
+		}
+
+		visibleStart := m.tableList.Offset
+		visibleEnd := visibleStart + m.height - 20
+		if visibleEnd > len(m.filteredTables) {
+			visibleEnd = len(m.filteredTables)
+		}
+
+		for i := visibleStart; i < visibleEnd; i++ {
+			tableName := m.filteredTables[i]
+			isSelected := i == m.tableList.Selected
+
+			// Highlight matched characters
+			var displayName string
+			if matchedIdx, ok := matchMap[tableName]; ok && len(matchedIdx) > 0 {
+				displayName = ui.HighlightMatches(tableName, matchedIdx,
+					func(s string) string { return s },
+					func(s string) string { return ui.WarningStyle.Render(s) },
+				)
+			} else {
+				displayName = tableName
+			}
+
+			if isSelected {
+				listContent.WriteString(ui.SelectedStyle.Render("▸ " + tableName))
+			} else {
+				listContent.WriteString(ui.ItemStyle.Render("  " + displayName))
+			}
+			listContent.WriteString("\n")
+		}
+	}
+
+	b.WriteString(listStyle.Render(listContent.String()))
 	b.WriteString("\n\n")
 
 	// Status
-	if m.statusMsg != "" {
+	if m.statusMsg != "" && !m.tableFilterMode {
 		b.WriteString(ui.HelpStyle.Render(m.statusMsg))
 		b.WriteString("\n")
 	}
 
 	// Help
 	var helpBindings []ui.KeyBinding
-	helpBindings = append(helpBindings, ui.KeyBinding{Key: "↑/↓", Desc: "Navigate"})
-	helpBindings = append(helpBindings, ui.KeyBinding{Key: "Enter", Desc: "Open"})
-	if len(m.discoveredRegions) > 1 {
-		helpBindings = append(helpBindings, ui.KeyBinding{Key: "Tab", Desc: "Region"})
+	if m.tableFilterMode {
+		helpBindings = append(helpBindings, ui.KeyBinding{Key: "↑/↓", Desc: "Navigate"})
+		helpBindings = append(helpBindings, ui.KeyBinding{Key: "Enter", Desc: "Select"})
+		helpBindings = append(helpBindings, ui.KeyBinding{Key: "Esc", Desc: "Clear"})
+	} else {
+		helpBindings = append(helpBindings, ui.KeyBinding{Key: "↑/↓", Desc: "Navigate"})
+		helpBindings = append(helpBindings, ui.KeyBinding{Key: "/", Desc: "Search"})
+		helpBindings = append(helpBindings, ui.KeyBinding{Key: "Enter", Desc: "Open"})
+		if len(m.discoveredRegions) > 1 {
+			helpBindings = append(helpBindings, ui.KeyBinding{Key: "Tab", Desc: "Region"})
+		}
+		helpBindings = append(helpBindings, ui.KeyBinding{Key: "c", Desc: "Create"})
+		helpBindings = append(helpBindings, ui.KeyBinding{Key: "r", Desc: "Refresh"})
+		helpBindings = append(helpBindings, ui.KeyBinding{Key: "q", Desc: "Back"})
 	}
-	helpBindings = append(helpBindings, ui.KeyBinding{Key: "c", Desc: "Create"})
-	helpBindings = append(helpBindings, ui.KeyBinding{Key: "r", Desc: "Refresh"})
-	helpBindings = append(helpBindings, ui.KeyBinding{Key: "q", Desc: "Back"})
 	
 	help := ui.RenderHelp(helpBindings)
 	b.WriteString(help)
@@ -1413,6 +1634,13 @@ func (m Model) viewTableData() string {
 
 	// Status bar
 	status := m.statusMsg
+	
+	// Show column position
+	if len(m.dataTable.Headers) > 0 {
+		colInfo := fmt.Sprintf(" | Col %d/%d", m.dataTable.SelectedCol+1, len(m.dataTable.Headers))
+		status += ui.HelpStyle.Render(colInfo)
+	}
+	
 	filterSummary := m.filterBuilder.GetFilterSummary()
 	if filterSummary != "" {
 		status += ui.WarningStyle.Render(" | Filter: " + filterSummary)
@@ -1425,15 +1653,14 @@ func (m Model) viewTableData() string {
 
 	// Help
 	help := ui.RenderHelp([]ui.KeyBinding{
-		{Key: "↑↓←→", Desc: "Navigate"},
+		{Key: "↑↓", Desc: "Rows"},
+		{Key: "←→/[]", Desc: "Cols"},
 		{Key: "Enter", Desc: "View"},
-		{Key: "y/Y", Desc: "Copy"},
+		{Key: "y", Desc: "Copy"},
 		{Key: "n", Desc: "New"},
 		{Key: "e", Desc: "Edit"},
-		{Key: "d", Desc: "Delete"},
 		{Key: "f", Desc: "Filter"},
 		{Key: "s", Desc: "Schema"},
-		{Key: "x", Desc: "Export"},
 		{Key: "q", Desc: "Back"},
 	})
 	b.WriteString(help)
