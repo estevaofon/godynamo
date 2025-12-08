@@ -64,16 +64,22 @@ func getDefaultRegion() string {
 
 // Messages
 type (
-	errMsg            struct{ err error }
-	tablesLoadedMsg   struct{ tables []string }
-	tableInfoMsg      struct{ info *dynamo.TableInfo }
-	scanResultMsg     struct{ result *dynamo.ScanResult }
-	queryResultMsg    struct{ result *dynamo.QueryResult }
-	itemSavedMsg      struct{}
-	itemDeletedMsg    struct{}
-	tableCreatedMsg   struct{}
-	tableDeletedMsg   struct{}
-	connectionTestMsg struct{ success bool; err error }
+	errMsg              struct{ err error }
+	tablesLoadedMsg     struct{ tables []string }
+	tableInfoMsg        struct{ info *dynamo.TableInfo }
+	scanResultMsg       struct{ result *dynamo.ScanResult }
+	queryResultMsg      struct{ result *dynamo.QueryResult }
+	itemSavedMsg        struct{}
+	itemDeletedMsg      struct{}
+	tableCreatedMsg     struct{}
+	tableDeletedMsg     struct{}
+	connectionTestMsg   struct{ 
+		success bool
+		err     error
+		client  *dynamo.Client
+		region  string
+	}
+	regionsDiscoveredMsg struct{ regions []dynamo.RegionInfo }
 )
 
 // View modes
@@ -81,6 +87,7 @@ type viewMode int
 
 const (
 	viewConnect viewMode = iota
+	viewSelectRegion
 	viewTables
 	viewTableData
 	viewItemDetail
@@ -117,6 +124,13 @@ type Model struct {
 	err        error
 	statusMsg  string
 	loading    bool
+
+	// Region discovery
+	discoveredRegions   []dynamo.RegionInfo
+	regionList          ui.List
+	selectedRegion      string
+	selectedRegionIdx   int
+	regionDropdownOpen  bool
 
 	// Window dimensions
 	width  int
@@ -189,6 +203,9 @@ func New() Model {
 
 	m.tableList = ui.NewList("Tables", []string{})
 	m.tableList.Height = 30
+
+	m.regionList = ui.NewList("Regions with Tables", []string{})
+	m.regionList.Height = 20
 
 	m.dataTable = ui.NewDataTable()
 
@@ -311,6 +328,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.view {
 		case viewConnect:
 			return m.updateConnect(msg)
+		case viewSelectRegion:
+			return m.updateSelectRegion(msg)
 		case viewTables:
 			return m.updateTables(msg)
 		case viewTableData:
@@ -384,14 +403,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case connectionTestMsg:
 		if msg.success {
+			m.client = msg.client
+			if msg.region != "" {
+				m.selectedRegion = msg.region
+			}
 			m.loading = true
 			m.statusMsg = "Connected! Loading tables..."
 			return m, m.loadTables()
 		} else {
+			m.loading = false
 			m.err = msg.err
 			m.statusMsg = "Connection failed: " + msg.err.Error()
 		}
 		return m, nil
+
+	case regionsDiscoveredMsg:
+		m.loading = false
+		m.discoveredRegions = msg.regions
+		if len(msg.regions) == 0 {
+			m.statusMsg = "No regions with tables found"
+			m.err = fmt.Errorf("no DynamoDB tables found in any region")
+			return m, nil
+		}
+		// Connect to first region and show tables with region dropdown
+		m.selectedRegionIdx = 0
+		m.selectedRegion = msg.regions[0].Region
+		m.statusMsg = fmt.Sprintf("Found %d regions with tables", len(msg.regions))
+		return m, m.connectToRegion(msg.regions[0].Region)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -400,29 +438,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) updateConnect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "tab", "down":
-		m.connForm.focusIndex++
-		if m.connForm.focusIndex >= len(m.connForm.inputs)+1 {
-			m.connForm.focusIndex = 0
+		if m.connForm.useLocal {
+			m.connForm.focusIndex++
+			if m.connForm.focusIndex >= len(m.connForm.inputs)+1 {
+				m.connForm.focusIndex = 0
+			}
+			m.updateConnFormFocus()
 		}
-		m.updateConnFormFocus()
 
 	case "shift+tab", "up":
-		m.connForm.focusIndex--
-		if m.connForm.focusIndex < 0 {
-			m.connForm.focusIndex = len(m.connForm.inputs)
+		if m.connForm.useLocal {
+			m.connForm.focusIndex--
+			if m.connForm.focusIndex < 0 {
+				m.connForm.focusIndex = len(m.connForm.inputs)
+			}
+			m.updateConnFormFocus()
 		}
-		m.updateConnFormFocus()
 
 	case " ":
-		if m.connForm.focusIndex == len(m.connForm.inputs) {
-			m.connForm.useLocal = !m.connForm.useLocal
-		}
+		m.connForm.useLocal = !m.connForm.useLocal
+		m.err = nil
+		// Reset focus when toggling
+		m.connForm.focusIndex = len(m.connForm.inputs) // Focus on checkbox
 
 	case "enter":
+		m.loading = true
+		m.err = nil
+		if !m.connForm.useLocal {
+			m.statusMsg = "Scanning regions..."
+		}
 		return m, m.connect()
 
 	default:
-		if m.connForm.focusIndex < len(m.connForm.inputs) {
+		if m.connForm.useLocal && m.connForm.focusIndex < len(m.connForm.inputs) {
 			var cmd tea.Cmd
 			m.connForm.inputs[m.connForm.focusIndex], cmd = m.connForm.inputs[m.connForm.focusIndex].Update(msg)
 			return m, cmd
@@ -443,6 +491,32 @@ func (m *Model) updateConnFormFocus() {
 }
 
 func (m *Model) updateTables(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle region dropdown
+	if m.regionDropdownOpen {
+		switch msg.String() {
+		case "up", "k":
+			if m.selectedRegionIdx > 0 {
+				m.selectedRegionIdx--
+			}
+		case "down", "j":
+			if m.selectedRegionIdx < len(m.discoveredRegions)-1 {
+				m.selectedRegionIdx++
+			}
+		case "enter":
+			m.regionDropdownOpen = false
+			newRegion := m.discoveredRegions[m.selectedRegionIdx].Region
+			if newRegion != m.selectedRegion {
+				m.selectedRegion = newRegion
+				m.loading = true
+				m.statusMsg = fmt.Sprintf("Switching to %s...", newRegion)
+				return m, m.connectToRegion(newRegion)
+			}
+		case "esc":
+			m.regionDropdownOpen = false
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "up", "k":
 		m.tableList.MoveUp()
@@ -461,6 +535,11 @@ func (m *Model) updateTables(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.createTableForm.focusIndex = 0
 	case "r":
 		return m, m.loadTables()
+	case "tab":
+		// Toggle region dropdown if multiple regions
+		if len(m.discoveredRegions) > 1 {
+			m.regionDropdownOpen = !m.regionDropdownOpen
+		}
 	case "q", "esc":
 		m.view = viewConnect
 	}
@@ -695,6 +774,25 @@ func (m *Model) updateQuery(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) updateSelectRegion(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		m.regionList.MoveUp()
+	case "down", "j":
+		m.regionList.MoveDown()
+	case "enter":
+		if m.regionList.Selected >= 0 && m.regionList.Selected < len(m.discoveredRegions) {
+			region := m.discoveredRegions[m.regionList.Selected].Region
+			m.loading = true
+			m.statusMsg = fmt.Sprintf("Connecting to %s...", region)
+			return m, m.connectToRegion(region)
+		}
+	case "q", "esc":
+		m.view = viewConnect
+	}
+	return m, nil
+}
+
 func (m *Model) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
@@ -730,13 +828,52 @@ func (m *Model) updateExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // Commands
 
 func (m *Model) connect() tea.Cmd {
+	endpoint := m.connForm.inputs[0].Value()
+	useLocal := m.connForm.useLocal
+	region := m.connForm.inputs[1].Value()
+	accessKey := m.connForm.inputs[2].Value()
+	secretKey := m.connForm.inputs[3].Value()
+
+	return func() tea.Msg {
+		// If using local DynamoDB, connect directly
+		if useLocal || endpoint != "" {
+			cfg := dynamo.ConnectionConfig{
+				Endpoint:  endpoint,
+				Region:    region,
+				AccessKey: accessKey,
+				SecretKey: secretKey,
+				UseLocal:  useLocal,
+			}
+
+			client, err := dynamo.NewClient(cfg)
+			if err != nil {
+				return connectionTestMsg{success: false, err: err}
+			}
+
+			// Test connection by listing tables
+			_, err = client.ListTables(context.Background())
+			if err != nil {
+				return connectionTestMsg{success: false, err: err}
+			}
+
+			return connectionTestMsg{success: true, client: client, region: region}
+		}
+
+		// For AWS, discover regions with tables
+		regions, err := dynamo.DiscoverRegionsWithTables(context.Background(), false, "")
+		if err != nil {
+			return connectionTestMsg{success: false, err: err}
+		}
+
+		return regionsDiscoveredMsg{regions: regions}
+	}
+}
+
+func (m *Model) connectToRegion(region string) tea.Cmd {
 	return func() tea.Msg {
 		cfg := dynamo.ConnectionConfig{
-			Endpoint:  m.connForm.inputs[0].Value(),
-			Region:    m.connForm.inputs[1].Value(),
-			AccessKey: m.connForm.inputs[2].Value(),
-			SecretKey: m.connForm.inputs[3].Value(),
-			UseLocal:  m.connForm.useLocal,
+			Region:   region,
+			UseLocal: false,
 		}
 
 		client, err := dynamo.NewClient(cfg)
@@ -744,15 +881,7 @@ func (m *Model) connect() tea.Cmd {
 			return connectionTestMsg{success: false, err: err}
 		}
 
-		m.client = client
-
-		// Test connection by listing tables
-		_, err = client.ListTables(context.Background())
-		if err != nil {
-			return connectionTestMsg{success: false, err: err}
-		}
-
-		return connectionTestMsg{success: true}
+		return connectionTestMsg{success: true, client: client, region: region}
 	}
 }
 
@@ -1013,6 +1142,8 @@ func (m Model) View() string {
 	switch m.view {
 	case viewConnect:
 		return m.viewConnect()
+	case viewSelectRegion:
+		return m.viewSelectRegion()
 	case viewTables:
 		return m.viewTables()
 	case viewTableData:
@@ -1049,19 +1180,20 @@ func (m Model) viewConnect() string {
 
 	form := lipgloss.NewStyle().Width(60).Padding(1, 2)
 
-	labels := []string{"Endpoint", "Region", "Access Key", "Secret Key"}
 	var formContent strings.Builder
 
-	for i, input := range m.connForm.inputs {
-		style := ui.InputStyle
-		if i == m.connForm.focusIndex {
-			style = ui.InputFocusedStyle
-		}
-		formContent.WriteString(ui.ItemStyle.Render(labels[i]) + "\n")
-		formContent.WriteString(style.Width(50).Render(input.View()) + "\n\n")
+	// Show loading state
+	if m.loading {
+		formContent.WriteString("\n")
+		formContent.WriteString(ui.WarningStyle.Render("🔍 Scanning regions for DynamoDB tables..."))
+		formContent.WriteString("\n\n")
+		formContent.WriteString(ui.HelpStyle.Render("This may take a few seconds"))
+		formContent.WriteString("\n")
+		b.WriteString(lipgloss.Place(m.width, 0, lipgloss.Center, lipgloss.Top, form.Render(formContent.String())))
+		return b.String()
 	}
 
-	// Local checkbox
+	// Local checkbox first
 	checkbox := "[ ]"
 	if m.connForm.useLocal {
 		checkbox = "[✓]"
@@ -1071,6 +1203,23 @@ func (m Model) viewConnect() string {
 		checkStyle = ui.SelectedStyle
 	}
 	formContent.WriteString(checkStyle.Render(checkbox+" Use Local DynamoDB") + "\n\n")
+
+	if m.connForm.useLocal {
+		// Show local-specific fields
+		labels := []string{"Endpoint", "Region", "Access Key", "Secret Key"}
+		for i, input := range m.connForm.inputs {
+			style := ui.InputStyle
+			if i == m.connForm.focusIndex {
+				style = ui.InputFocusedStyle
+			}
+			formContent.WriteString(ui.ItemStyle.Render(labels[i]) + "\n")
+			formContent.WriteString(style.Width(50).Render(input.View()) + "\n\n")
+		}
+	} else {
+		// AWS mode - auto-detect regions
+		formContent.WriteString(ui.HelpStyle.Render("AWS Mode: Regions will be auto-detected") + "\n")
+		formContent.WriteString(ui.HelpStyle.Render("Using credentials from ~/.aws or environment") + "\n\n")
+	}
 
 	formContent.WriteString(ui.ButtonFocusedStyle.Render(" Connect "))
 
@@ -1083,11 +1232,66 @@ func (m Model) viewConnect() string {
 
 	// Help
 	help := ui.RenderHelp([]ui.KeyBinding{
-		{Key: "Tab", Desc: "Next field"},
+		{Key: "Space", Desc: "Toggle Local"},
 		{Key: "Enter", Desc: "Connect"},
 		{Key: "Ctrl+Q", Desc: "Quit"},
 	})
 	b.WriteString("\n\n")
+	b.WriteString(lipgloss.Place(m.width, 0, lipgloss.Center, lipgloss.Bottom, help))
+
+	return b.String()
+}
+
+func (m Model) viewSelectRegion() string {
+	var b strings.Builder
+
+	// Logo
+	logo := ui.LogoStyle.Render("⚡ GoDynamo")
+	b.WriteString(lipgloss.Place(m.width, 5, lipgloss.Center, lipgloss.Center, logo))
+	b.WriteString("\n\n")
+
+	title := ui.TitleStyle.Render("🌍 Select Region")
+	b.WriteString(lipgloss.Place(m.width, 2, lipgloss.Center, lipgloss.Center, title))
+	b.WriteString("\n")
+
+	subtitle := ui.HelpStyle.Render("Found tables in the following regions:")
+	b.WriteString(lipgloss.Place(m.width, 1, lipgloss.Center, lipgloss.Center, subtitle))
+	b.WriteString("\n\n")
+
+	// Region list
+	listStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ui.ColorPrimary).
+		Padding(1, 2).
+		Width(50)
+
+	var listContent strings.Builder
+	for i, region := range m.discoveredRegions {
+		item := fmt.Sprintf("%-20s %d tables", region.Region, region.TableCount)
+		if i == m.regionList.Selected {
+			listContent.WriteString(ui.SelectedStyle.Render("▸ " + item))
+		} else {
+			listContent.WriteString(ui.ItemStyle.Render("  " + item))
+		}
+		listContent.WriteString("\n")
+	}
+
+	b.WriteString(lipgloss.Place(m.width, 0, lipgloss.Center, lipgloss.Top, listStyle.Render(listContent.String())))
+	b.WriteString("\n\n")
+
+	// Status
+	if m.statusMsg != "" {
+		b.WriteString(lipgloss.Place(m.width, 0, lipgloss.Center, lipgloss.Top, ui.HelpStyle.Render(m.statusMsg)))
+		b.WriteString("\n")
+	}
+
+	// Help
+	help := ui.RenderHelp([]ui.KeyBinding{
+		{Key: "↑/↓", Desc: "Navigate"},
+		{Key: "Enter", Desc: "Select"},
+		{Key: "q", Desc: "Back"},
+	})
+	b.WriteString("\n")
 	b.WriteString(lipgloss.Place(m.width, 0, lipgloss.Center, lipgloss.Bottom, help))
 
 	return b.String()
@@ -1100,6 +1304,53 @@ func (m Model) viewTables() string {
 	header := ui.TitleStyle.Render("⚡ GoDynamo - Tables")
 	b.WriteString(header)
 	b.WriteString("\n\n")
+
+	// Region dropdown (if multiple regions)
+	if len(m.discoveredRegions) > 1 {
+		b.WriteString(ui.HelpStyle.Render("Region: "))
+		
+		// Current region button
+		regionLabel := fmt.Sprintf(" 🌍 %s (%d tables) ▼ ", 
+			m.selectedRegion, 
+			len(m.tables))
+		
+		if m.regionDropdownOpen {
+			b.WriteString(ui.ButtonFocusedStyle.Render(regionLabel))
+		} else {
+			b.WriteString(ui.ButtonStyle.Render(regionLabel))
+		}
+		b.WriteString("\n")
+
+		// Dropdown list
+		if m.regionDropdownOpen {
+			dropdownStyle := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(ui.ColorPrimary).
+				Padding(0, 1).
+				MarginLeft(8)
+
+			var dropdownContent strings.Builder
+			for i, region := range m.discoveredRegions {
+				item := fmt.Sprintf("%-15s %d tables", region.Region, region.TableCount)
+				if i == m.selectedRegionIdx {
+					dropdownContent.WriteString(ui.SelectedStyle.Render("▸ " + item))
+				} else {
+					dropdownContent.WriteString(ui.ItemStyle.Render("  " + item))
+				}
+				if i < len(m.discoveredRegions)-1 {
+					dropdownContent.WriteString("\n")
+				}
+			}
+			b.WriteString(dropdownStyle.Render(dropdownContent.String()))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	} else if m.selectedRegion != "" {
+		// Single region, just show it
+		b.WriteString(ui.HelpStyle.Render("Region: "))
+		b.WriteString(ui.BadgeStyle.Render(" 🌍 " + m.selectedRegion + " "))
+		b.WriteString("\n\n")
+	}
 
 	// Table list
 	m.tableList.Width = m.width - 4
@@ -1119,13 +1370,17 @@ func (m Model) viewTables() string {
 	}
 
 	// Help
-	help := ui.RenderHelp([]ui.KeyBinding{
-		{Key: "↑/↓", Desc: "Navigate"},
-		{Key: "Enter", Desc: "Open"},
-		{Key: "c", Desc: "Create table"},
-		{Key: "r", Desc: "Refresh"},
-		{Key: "q", Desc: "Back"},
-	})
+	var helpBindings []ui.KeyBinding
+	helpBindings = append(helpBindings, ui.KeyBinding{Key: "↑/↓", Desc: "Navigate"})
+	helpBindings = append(helpBindings, ui.KeyBinding{Key: "Enter", Desc: "Open"})
+	if len(m.discoveredRegions) > 1 {
+		helpBindings = append(helpBindings, ui.KeyBinding{Key: "Tab", Desc: "Region"})
+	}
+	helpBindings = append(helpBindings, ui.KeyBinding{Key: "c", Desc: "Create"})
+	helpBindings = append(helpBindings, ui.KeyBinding{Key: "r", Desc: "Refresh"})
+	helpBindings = append(helpBindings, ui.KeyBinding{Key: "q", Desc: "Back"})
+	
+	help := ui.RenderHelp(helpBindings)
 	b.WriteString(help)
 
 	return b.String()

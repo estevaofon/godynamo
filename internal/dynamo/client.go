@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -11,6 +12,121 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
+
+// AWS Regions list
+var AWSRegions = []string{
+	"us-east-1",
+	"us-east-2",
+	"us-west-1",
+	"us-west-2",
+	"af-south-1",
+	"ap-east-1",
+	"ap-south-1",
+	"ap-south-2",
+	"ap-northeast-1",
+	"ap-northeast-2",
+	"ap-northeast-3",
+	"ap-southeast-1",
+	"ap-southeast-2",
+	"ap-southeast-3",
+	"ap-southeast-4",
+	"ca-central-1",
+	"eu-central-1",
+	"eu-central-2",
+	"eu-west-1",
+	"eu-west-2",
+	"eu-west-3",
+	"eu-south-1",
+	"eu-south-2",
+	"eu-north-1",
+	"il-central-1",
+	"me-south-1",
+	"me-central-1",
+	"sa-east-1",
+}
+
+// RegionInfo contains information about a region with tables
+type RegionInfo struct {
+	Region     string
+	TableCount int
+	Tables     []string
+}
+
+// DiscoverRegionsWithTables scans all regions and returns those with DynamoDB tables
+func DiscoverRegionsWithTables(ctx context.Context, useLocal bool, endpoint string) ([]RegionInfo, error) {
+	if useLocal {
+		// For local DynamoDB, just return a single "local" region
+		cfg, err := config.LoadDefaultConfig(ctx,
+			config.WithRegion("us-east-1"),
+			config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider("local", "local", ""),
+			),
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
+			o.BaseEndpoint = aws.String(endpoint)
+		})
+
+		tables, err := client.ListTables(ctx, &dynamodb.ListTablesInput{})
+		if err != nil {
+			return nil, err
+		}
+
+		return []RegionInfo{{
+			Region:     "local",
+			TableCount: len(tables.TableNames),
+			Tables:     tables.TableNames,
+		}}, nil
+	}
+
+	var results []RegionInfo
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	// Use a semaphore to limit concurrent requests
+	sem := make(chan struct{}, 10)
+
+	for _, region := range AWSRegions {
+		wg.Add(1)
+		go func(r string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(r))
+			if err != nil {
+				return
+			}
+
+			client := dynamodb.NewFromConfig(cfg)
+
+			// Quick check - just get the first page
+			tables, err := client.ListTables(ctx, &dynamodb.ListTablesInput{
+				Limit: aws.Int32(100),
+			})
+			if err != nil {
+				return
+			}
+
+			if len(tables.TableNames) > 0 {
+				mu.Lock()
+				results = append(results, RegionInfo{
+					Region:     r,
+					TableCount: len(tables.TableNames),
+					Tables:     tables.TableNames,
+				})
+				mu.Unlock()
+			}
+		}(region)
+	}
+
+	wg.Wait()
+
+	return results, nil
+}
 
 // Client wraps the DynamoDB client with helper methods
 type Client struct {
