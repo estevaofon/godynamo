@@ -21,59 +21,18 @@ import (
 	"github.com/godynamo/internal/ui"
 )
 
-// checkAWSCredentials checks if AWS credentials are available
-func checkAWSCredentials() bool {
-	// Check environment variables
-	if os.Getenv("AWS_ACCESS_KEY_ID") != "" && os.Getenv("AWS_SECRET_ACCESS_KEY") != "" {
-		return true
-	}
-
-	// Check AWS credentials file
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-
-	credentialsFile := filepath.Join(home, ".aws", "credentials")
-	if _, err := os.Stat(credentialsFile); err == nil {
-		return true
-	}
-
-	// Check AWS config file (for SSO, etc.)
-	configFile := filepath.Join(home, ".aws", "config")
-	if _, err := os.Stat(configFile); err == nil {
-		return true
-	}
-
-	return false
-}
-
-// getDefaultRegion returns the default AWS region
-func getDefaultRegion() string {
-	// Check environment variable
-	if region := os.Getenv("AWS_REGION"); region != "" {
-		return region
-	}
-	if region := os.Getenv("AWS_DEFAULT_REGION"); region != "" {
-		return region
-	}
-
-	// Default to us-east-1
-	return "us-east-1"
-}
-
 // Messages
 type (
-	errMsg              struct{ err error }
-	tablesLoadedMsg     struct{ tables []string }
-	tableInfoMsg        struct{ info *dynamo.TableInfo }
-	scanResultMsg       struct{ result *dynamo.ScanResult }
-	queryResultMsg      struct{ result *dynamo.QueryResult }
-	itemSavedMsg        struct{}
-	itemDeletedMsg      struct{}
-	tableCreatedMsg     struct{}
-	tableDeletedMsg     struct{}
-	connectionTestMsg   struct{ 
+	errMsg            struct{ err error }
+	tablesLoadedMsg   struct{ tables []string }
+	tableInfoMsg      struct{ info *dynamo.TableInfo }
+	scanResultMsg     struct{ result *dynamo.ScanResult }
+	queryResultMsg    struct{ result *dynamo.QueryResult }
+	itemSavedMsg      struct{}
+	itemDeletedMsg    struct{}
+	tableCreatedMsg   struct{}
+	tableDeletedMsg   struct{}
+	connectionTestMsg struct {
 		success bool
 		err     error
 		client  *dynamo.Client
@@ -96,6 +55,7 @@ const (
 	viewCreateTable
 	viewQuery
 	viewConfirmDelete
+	viewConfirmSave
 	viewExport
 	viewSchema
 )
@@ -116,21 +76,20 @@ type Model struct {
 
 	// Connection settings
 	connections []models.Connection
-	connForm    connectionForm
 
 	// Current state
-	view       viewMode
-	focus      focusArea
-	err        error
-	statusMsg  string
-	loading    bool
+	view      viewMode
+	focus     focusArea
+	err       error
+	statusMsg string
+	loading   bool
 
 	// Region discovery
-	discoveredRegions   []dynamo.RegionInfo
-	regionList          ui.List
-	selectedRegion      string
-	selectedRegionIdx   int
-	regionDropdownOpen  bool
+	discoveredRegions  []dynamo.RegionInfo
+	regionList         ui.List
+	selectedRegion     string
+	selectedRegionIdx  int
+	regionDropdownOpen bool
 
 	// Window dimensions
 	width  int
@@ -146,10 +105,10 @@ type Model struct {
 	tableInfo       *dynamo.TableInfo
 
 	// Data view
-	dataTable    ui.DataTable
-	items        []map[string]types.AttributeValue
-	lastKey      map[string]types.AttributeValue
-	pageSize     int32
+	dataTable ui.DataTable
+	items     []map[string]types.AttributeValue
+	lastKey   map[string]types.AttributeValue
+	pageSize  int32
 
 	// Item view
 	selectedItem map[string]types.AttributeValue
@@ -178,12 +137,6 @@ type Model struct {
 	exportPath   string
 }
 
-type connectionForm struct {
-	inputs     []textinput.Model
-	focusIndex int
-	useLocal   bool
-}
-
 type createTableForm struct {
 	inputs      []textinput.Model
 	focusIndex  int
@@ -194,12 +147,13 @@ type createTableForm struct {
 // New creates a new Model
 func New() Model {
 	m := Model{
-		view:     viewConnect,
-		focus:    focusSidebar,
-		pageSize: 50,
+		view:      viewConnect,
+		focus:     focusSidebar,
+		pageSize:  50,
+		loading:   true,
+		statusMsg: "Connecting to AWS DynamoDB...",
 	}
 
-	m.initConnectionForm()
 	m.initCreateTableForm()
 	m.initFilterBuilder()
 	m.initItemEditor()
@@ -215,43 +169,6 @@ func New() Model {
 	m.itemViewport = viewport.New(80, 20)
 
 	return m
-}
-
-func (m *Model) initConnectionForm() {
-	inputs := make([]textinput.Model, 4)
-
-	// Check if AWS credentials exist
-	hasAWSCreds := checkAWSCredentials()
-
-	inputs[0] = textinput.New()
-	inputs[0].Placeholder = "Leave empty for AWS, or http://localhost:8000 for local"
-	if !hasAWSCreds {
-		inputs[0].SetValue("http://localhost:8000")
-	}
-	inputs[0].Focus()
-
-	inputs[1] = textinput.New()
-	inputs[1].Placeholder = "us-east-1"
-	inputs[1].SetValue(getDefaultRegion())
-
-	inputs[2] = textinput.New()
-	inputs[2].Placeholder = "Leave empty to use AWS credentials"
-	if !hasAWSCreds {
-		inputs[2].SetValue("local")
-	}
-
-	inputs[3] = textinput.New()
-	inputs[3].Placeholder = "Leave empty to use AWS credentials"
-	if !hasAWSCreds {
-		inputs[3].SetValue("local")
-	}
-	inputs[3].EchoMode = textinput.EchoPassword
-	inputs[3].EchoCharacter = '•'
-
-	m.connForm = connectionForm{
-		inputs:   inputs,
-		useLocal: !hasAWSCreds, // Auto-detect: use local only if no AWS creds
-	}
 }
 
 func (m *Model) initCreateTableForm() {
@@ -304,7 +221,18 @@ func (m *Model) initItemEditor() {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	return textinput.Blink
+	// Start discovering regions immediately
+	return m.discoverRegions()
+}
+
+func (m *Model) discoverRegions() tea.Cmd {
+	return func() tea.Msg {
+		regions, err := dynamo.DiscoverRegionsWithTables(context.Background(), false, "")
+		if err != nil {
+			return errMsg{err}
+		}
+		return regionsDiscoveredMsg{regions: regions}
+	}
 }
 
 // Update handles messages
@@ -351,6 +279,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateQuery(msg)
 		case viewConfirmDelete:
 			return m.updateConfirmDelete(msg)
+		case viewConfirmSave:
+			return m.updateConfirmSave(msg)
 		case viewExport:
 			return m.updateExport(msg)
 		case viewSchema:
@@ -447,57 +377,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) updateConnect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "tab", "down":
-		if m.connForm.useLocal {
-			m.connForm.focusIndex++
-			if m.connForm.focusIndex >= len(m.connForm.inputs)+1 {
-				m.connForm.focusIndex = 0
-			}
-			m.updateConnFormFocus()
-		}
-
-	case "shift+tab", "up":
-		if m.connForm.useLocal {
-			m.connForm.focusIndex--
-			if m.connForm.focusIndex < 0 {
-				m.connForm.focusIndex = len(m.connForm.inputs)
-			}
-			m.updateConnFormFocus()
-		}
-
-	case " ":
-		m.connForm.useLocal = !m.connForm.useLocal
-		m.err = nil
-		// Reset focus when toggling
-		m.connForm.focusIndex = len(m.connForm.inputs) // Focus on checkbox
-
-	case "enter":
+	case "enter", "r":
+		// Retry connection
 		m.loading = true
 		m.err = nil
-		if !m.connForm.useLocal {
-			m.statusMsg = "Scanning regions..."
-		}
-		return m, m.connect()
-
-	default:
-		if m.connForm.useLocal && m.connForm.focusIndex < len(m.connForm.inputs) {
-			var cmd tea.Cmd
-			m.connForm.inputs[m.connForm.focusIndex], cmd = m.connForm.inputs[m.connForm.focusIndex].Update(msg)
-			return m, cmd
-		}
+		m.statusMsg = "Scanning regions..."
+		return m, m.discoverRegions()
 	}
-
 	return m, nil
-}
-
-func (m *Model) updateConnFormFocus() {
-	for i := range m.connForm.inputs {
-		if i == m.connForm.focusIndex {
-			m.connForm.inputs[i].Focus()
-		} else {
-			m.connForm.inputs[i].Blur()
-		}
-	}
 }
 
 func (m *Model) updateTables(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -785,7 +672,13 @@ func (m *Model) updateItemEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.view = viewTableData
 	case "ctrl+s":
-		return m, m.saveItem()
+		// Validate JSON before showing confirmation
+		_, err := models.JSONToItem(m.itemEditor.Value())
+		if err != nil {
+			m.statusMsg = "Invalid JSON: " + err.Error()
+			return m, nil
+		}
+		m.view = viewConfirmSave
 	default:
 		var cmd tea.Cmd
 		m.itemEditor, cmd = m.itemEditor.Update(msg)
@@ -917,6 +810,19 @@ func (m *Model) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) updateConfirmSave(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		return m, m.saveItem()
+	case "n", "N", "esc":
+		// Go back to editor
+		if m.view == viewConfirmSave {
+			m.view = viewEditItem
+		}
+	}
+	return m, nil
+}
+
 func (m *Model) updateExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
@@ -932,48 +838,6 @@ func (m *Model) updateExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // Commands
-
-func (m *Model) connect() tea.Cmd {
-	endpoint := m.connForm.inputs[0].Value()
-	useLocal := m.connForm.useLocal
-	region := m.connForm.inputs[1].Value()
-	accessKey := m.connForm.inputs[2].Value()
-	secretKey := m.connForm.inputs[3].Value()
-
-	return func() tea.Msg {
-		// If using local DynamoDB, connect directly
-		if useLocal || endpoint != "" {
-			cfg := dynamo.ConnectionConfig{
-				Endpoint:  endpoint,
-				Region:    region,
-				AccessKey: accessKey,
-				SecretKey: secretKey,
-				UseLocal:  useLocal,
-			}
-
-			client, err := dynamo.NewClient(cfg)
-			if err != nil {
-				return connectionTestMsg{success: false, err: err}
-			}
-
-			// Test connection by listing tables
-			_, err = client.ListTables(context.Background())
-			if err != nil {
-				return connectionTestMsg{success: false, err: err}
-			}
-
-			return connectionTestMsg{success: true, client: client, region: region}
-		}
-
-		// For AWS, discover regions with tables
-		regions, err := dynamo.DiscoverRegionsWithTables(context.Background(), false, "")
-		if err != nil {
-			return connectionTestMsg{success: false, err: err}
-		}
-
-		return regionsDiscoveredMsg{regions: regions}
-	}
-}
 
 func (m *Model) connectToRegion(region string) tea.Cmd {
 	return func() tea.Msg {
@@ -1021,7 +885,7 @@ func (m *Model) scanTable() tea.Cmd {
 				if attrName, ok := m.filterNames["#attr0"]; ok && attrName == m.tableInfo.PartitionKey {
 					// Use Query for partition key lookup
 					keyCondition := fmt.Sprintf("#pk = %s", placeholder)
-					
+
 					queryInput := dynamo.QueryInput{
 						TableName:              m.currentTable,
 						KeyConditionExpression: keyCondition,
@@ -1216,7 +1080,7 @@ func (m *Model) deleteTable() tea.Cmd {
 func (m *Model) exportData() tea.Cmd {
 	return func() tea.Msg {
 		filename := fmt.Sprintf("%s.%s", m.currentTable, m.exportFormat)
-		
+
 		var data []byte
 		var err error
 
@@ -1294,6 +1158,8 @@ func (m Model) View() string {
 		return m.viewQuery()
 	case viewConfirmDelete:
 		return m.viewConfirmDelete()
+	case viewConfirmSave:
+		return m.viewConfirmSave()
 	case viewExport:
 		return m.viewExport()
 	case viewSchema:
@@ -1310,66 +1176,38 @@ func (m Model) viewConnect() string {
 	b.WriteString(lipgloss.Place(m.width, 5, lipgloss.Center, lipgloss.Center, logo))
 	b.WriteString("\n\n")
 
-	title := ui.TitleStyle.Render("Connect to DynamoDB")
+	title := ui.TitleStyle.Render("Connecting to AWS DynamoDB")
 	b.WriteString(lipgloss.Place(m.width, 2, lipgloss.Center, lipgloss.Center, title))
 	b.WriteString("\n\n")
 
-	form := lipgloss.NewStyle().Width(60).Padding(1, 2)
+	content := lipgloss.NewStyle().Width(60).Padding(1, 2).Align(lipgloss.Center)
 
-	var formContent strings.Builder
+	var statusContent strings.Builder
 
-	// Show loading state
 	if m.loading {
-		formContent.WriteString("\n")
-		formContent.WriteString(ui.WarningStyle.Render("🔍 Scanning regions for DynamoDB tables..."))
-		formContent.WriteString("\n\n")
-		formContent.WriteString(ui.HelpStyle.Render("This may take a few seconds"))
-		formContent.WriteString("\n")
-		b.WriteString(lipgloss.Place(m.width, 0, lipgloss.Center, lipgloss.Top, form.Render(formContent.String())))
-		return b.String()
+		statusContent.WriteString("\n")
+		statusContent.WriteString(ui.WarningStyle.Render("🔍 Scanning regions for DynamoDB tables..."))
+		statusContent.WriteString("\n\n")
+		statusContent.WriteString(ui.HelpStyle.Render("Using credentials from ~/.aws or environment"))
+		statusContent.WriteString("\n\n")
+		statusContent.WriteString(ui.HelpStyle.Render("This may take a few seconds"))
+		statusContent.WriteString("\n")
+	} else if m.err != nil {
+		statusContent.WriteString("\n")
+		statusContent.WriteString(ui.ErrorStyle.Render("❌ Connection Failed"))
+		statusContent.WriteString("\n\n")
+		statusContent.WriteString(ui.ErrorStyle.Render(m.err.Error()))
+		statusContent.WriteString("\n\n")
+		statusContent.WriteString(ui.HelpStyle.Render("Check your AWS credentials and try again"))
+		statusContent.WriteString("\n\n")
+		statusContent.WriteString(ui.ButtonFocusedStyle.Render(" Retry "))
 	}
 
-	// Local checkbox first
-	checkbox := "[ ]"
-	if m.connForm.useLocal {
-		checkbox = "[✓]"
-	}
-	checkStyle := ui.ItemStyle
-	if m.connForm.focusIndex == len(m.connForm.inputs) {
-		checkStyle = ui.SelectedStyle
-	}
-	formContent.WriteString(checkStyle.Render(checkbox+" Use Local DynamoDB") + "\n\n")
-
-	if m.connForm.useLocal {
-		// Show local-specific fields
-		labels := []string{"Endpoint", "Region", "Access Key", "Secret Key"}
-		for i, input := range m.connForm.inputs {
-			style := ui.InputStyle
-			if i == m.connForm.focusIndex {
-				style = ui.InputFocusedStyle
-			}
-			formContent.WriteString(ui.ItemStyle.Render(labels[i]) + "\n")
-			formContent.WriteString(style.Width(50).Render(input.View()) + "\n\n")
-		}
-	} else {
-		// AWS mode - auto-detect regions
-		formContent.WriteString(ui.HelpStyle.Render("AWS Mode: Regions will be auto-detected") + "\n")
-		formContent.WriteString(ui.HelpStyle.Render("Using credentials from ~/.aws or environment") + "\n\n")
-	}
-
-	formContent.WriteString(ui.ButtonFocusedStyle.Render(" Connect "))
-
-	b.WriteString(lipgloss.Place(m.width, 0, lipgloss.Center, lipgloss.Top, form.Render(formContent.String())))
-
-	if m.err != nil {
-		b.WriteString("\n")
-		b.WriteString(lipgloss.Place(m.width, 0, lipgloss.Center, lipgloss.Top, ui.ErrorStyle.Render("Error: "+m.err.Error())))
-	}
+	b.WriteString(lipgloss.Place(m.width, 0, lipgloss.Center, lipgloss.Top, content.Render(statusContent.String())))
 
 	// Help
 	help := ui.RenderHelp([]ui.KeyBinding{
-		{Key: "Space", Desc: "Toggle Local"},
-		{Key: "Enter", Desc: "Connect"},
+		{Key: "Enter", Desc: "Retry"},
 		{Key: "Ctrl+Q", Desc: "Quit"},
 	})
 	b.WriteString("\n\n")
@@ -1445,12 +1283,12 @@ func (m Model) viewTables() string {
 	if len(m.discoveredRegions) > 1 {
 		b.WriteString(ui.HelpStyle.Render("Region:"))
 		b.WriteString("\n")
-		
+
 		// Current region button
-		regionLabel := fmt.Sprintf(" 🌍 %s (%d tables) ▼ ", 
-			m.selectedRegion, 
+		regionLabel := fmt.Sprintf(" 🌍 %s (%d tables) ▼ ",
+			m.selectedRegion,
 			len(m.tables))
-		
+
 		if m.regionDropdownOpen {
 			b.WriteString(ui.ButtonFocusedStyle.Render(regionLabel))
 		} else {
@@ -1486,10 +1324,10 @@ func (m Model) viewTables() string {
 	}
 	b.WriteString("\n\n")
 
-	// Search/Filter box  
+	// Search/Filter box
 	searchIcon := "🔍 "
 	searchContent := m.tableFilter
-	
+
 	searchBoxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		Padding(0, 1).
@@ -1529,7 +1367,7 @@ func (m Model) viewTables() string {
 		Height(m.height - 18)
 
 	var listContent strings.Builder
-	
+
 	if len(m.filteredTables) == 0 {
 		if len(m.tables) == 0 {
 			listContent.WriteString(ui.HelpStyle.Render("No tables found. Press 'c' to create one."))
@@ -1537,13 +1375,6 @@ func (m Model) viewTables() string {
 			listContent.WriteString(ui.HelpStyle.Render("No tables match your search."))
 		}
 	} else {
-		// Get fuzzy matches for highlighting
-		matches := ui.FuzzyFind(m.tableFilter, m.filteredTables)
-		matchMap := make(map[string][]int)
-		for _, match := range matches {
-			matchMap[match.Text] = match.MatchedIdx
-		}
-
 		visibleStart := m.tableList.Offset
 		visibleEnd := visibleStart + m.height - 20
 		if visibleEnd > len(m.filteredTables) {
@@ -1554,21 +1385,10 @@ func (m Model) viewTables() string {
 			tableName := m.filteredTables[i]
 			isSelected := i == m.tableList.Selected
 
-			// Highlight matched characters
-			var displayName string
-			if matchedIdx, ok := matchMap[tableName]; ok && len(matchedIdx) > 0 {
-				displayName = ui.HighlightMatches(tableName, matchedIdx,
-					func(s string) string { return s },
-					func(s string) string { return ui.WarningStyle.Render(s) },
-				)
-			} else {
-				displayName = tableName
-			}
-
 			if isSelected {
 				listContent.WriteString(ui.SelectedStyle.Render("▸ " + tableName))
 			} else {
-				listContent.WriteString(ui.ItemStyle.Render("  " + displayName))
+				listContent.WriteString(ui.ItemStyle.Render("  " + tableName))
 			}
 			listContent.WriteString("\n")
 		}
@@ -1600,7 +1420,7 @@ func (m Model) viewTables() string {
 		helpBindings = append(helpBindings, ui.KeyBinding{Key: "r", Desc: "Refresh"})
 		helpBindings = append(helpBindings, ui.KeyBinding{Key: "q", Desc: "Back"})
 	}
-	
+
 	help := ui.RenderHelp(helpBindings)
 	b.WriteString(help)
 
@@ -1634,13 +1454,13 @@ func (m Model) viewTableData() string {
 
 	// Status bar
 	status := m.statusMsg
-	
+
 	// Show column position
 	if len(m.dataTable.Headers) > 0 {
 		colInfo := fmt.Sprintf(" | Col %d/%d", m.dataTable.SelectedCol+1, len(m.dataTable.Headers))
 		status += ui.HelpStyle.Render(colInfo)
 	}
-	
+
 	filterSummary := m.filterBuilder.GetFilterSummary()
 	if filterSummary != "" {
 		status += ui.WarningStyle.Render(" | Filter: " + filterSummary)
@@ -1805,6 +1625,21 @@ func (m Model) viewConfirmDelete() string {
 	return b.String()
 }
 
+func (m Model) viewConfirmSave() string {
+	var b strings.Builder
+
+	content := ui.ModalStyle.Render(
+		ui.TitleStyle.Render("💾 Confirm Save") + "\n\n" +
+			ui.WarningStyle.Render("Are you sure you want to save these changes?") + "\n\n" +
+			ui.HelpStyle.Render("This will update the item in DynamoDB") + "\n\n" +
+			ui.HelpStyle.Render("Press Y to confirm, N to cancel"),
+	)
+
+	b.WriteString(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content))
+
+	return b.String()
+}
+
 func (m Model) viewExport() string {
 	var b strings.Builder
 
@@ -1852,7 +1687,7 @@ func (m *Model) prepareSchemaView() {
 	// Parse the JSON to get syntax highlighting
 	var data interface{}
 	json.Unmarshal([]byte(m.tableInfo.RawJSON), &data)
-	
+
 	viewer := ui.NewJSONViewer(data)
 	content := viewer.Render()
 	m.itemViewport.SetContent(content)
@@ -1919,4 +1754,3 @@ func formatBytes(bytes int64) string {
 		return fmt.Sprintf("%d bytes", bytes)
 	}
 }
-
