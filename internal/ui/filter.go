@@ -55,12 +55,12 @@ type FilterCondition struct {
 
 // FilterBuilder is a visual filter builder component
 type FilterBuilder struct {
-	Conditions     []FilterCondition
-	ActiveCondIdx  int
-	ActiveField    int // 0=name, 1=operator, 2=value
-	OperatorOpen   bool
-	Width          int
-	Height         int
+	Conditions    []FilterCondition
+	ActiveCondIdx int
+	ActiveField   int // 0=name, 1=operator, 2=value
+	OperatorOpen  bool
+	Width         int
+	Height        int
 }
 
 // NewFilterBuilder creates a new FilterBuilder
@@ -230,7 +230,7 @@ func (f *FilterBuilder) PrevCondition() {
 	}
 }
 
-// Update handles input
+// Update handles input - accepts tea.Msg to support unicode characters
 func (f *FilterBuilder) Update(msg tea.Msg) tea.Cmd {
 	if f.ActiveCondIdx >= len(f.Conditions) {
 		return nil
@@ -238,6 +238,7 @@ func (f *FilterBuilder) Update(msg tea.Msg) tea.Cmd {
 
 	var cmd tea.Cmd
 
+	// Only update text inputs when they are focused (field 0 or 2)
 	switch f.ActiveField {
 	case 0:
 		f.Conditions[f.ActiveCondIdx].AttributeName, cmd = f.Conditions[f.ActiveCondIdx].AttributeName.Update(msg)
@@ -255,7 +256,7 @@ func parseValue(value string) interface{} {
 	if f, err := strconv.ParseFloat(value, 64); err == nil {
 		return f
 	}
-	
+
 	// Try to parse as boolean
 	if strings.ToLower(value) == "true" {
 		return true
@@ -263,12 +264,12 @@ func parseValue(value string) interface{} {
 	if strings.ToLower(value) == "false" {
 		return false
 	}
-	
+
 	// Try to parse as null
 	if strings.ToLower(value) == "null" {
 		return nil
 	}
-	
+
 	// Return as string
 	return value
 }
@@ -535,17 +536,16 @@ func (f *FilterBuilder) GetFilterSummary() string {
 		}
 		op := FilterOperators[cond.Operator]
 		value := strings.TrimSpace(cond.AttributeValue.Value())
-		
+
 		if cond.Operator == OpExists || cond.Operator == OpNotExists {
 			parts = append(parts, fmt.Sprintf("%s %s", name, op.Label))
 		} else if value != "" {
 			parts = append(parts, fmt.Sprintf("%s %s %s", name, op.Sym, value))
 		}
 	}
-	
+
 	if len(parts) == 0 {
 		return ""
 	}
 	return strings.Join(parts, " AND ")
 }
-

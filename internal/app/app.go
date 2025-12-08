@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/atotto/clipboard"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -28,6 +29,14 @@ type (
 	tableInfoMsg      struct{ info *dynamo.TableInfo }
 	scanResultMsg     struct{ result *dynamo.ScanResult }
 	queryResultMsg    struct{ result *dynamo.QueryResult }
+	continuousScanMsg struct {
+		result       *dynamo.ContinuousScanResult
+		totalScanned int64
+	}
+	scanProgressMsg struct {
+		itemsFound   int
+		totalScanned int64
+	}
 	itemSavedMsg      struct{}
 	itemDeletedMsg    struct{}
 	tableCreatedMsg   struct{}
@@ -56,6 +65,7 @@ const (
 	viewQuery
 	viewConfirmDelete
 	viewConfirmSave
+	viewConfirmContinueScan
 	viewExport
 	viewSchema
 )
@@ -121,6 +131,12 @@ type Model struct {
 	filterExpr    string
 	filterNames   map[string]string
 	filterValues  map[string]interface{}
+
+	// Continuous scan state
+	scanCancel       context.CancelFunc
+	scanTotalScanned int64
+	scanItemsFound   int
+	scanLastKey      map[string]types.AttributeValue
 
 	// Create/Edit item
 	itemEditor textarea.Model
@@ -239,6 +255,17 @@ func (m *Model) discoverRegions() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	// Handle viewQuery separately to support unicode input
+	if m.view == viewQuery {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "ctrl+c", "ctrl+q":
+				return m, tea.Quit
+			}
+		}
+		return m.updateQuery(msg)
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -275,12 +302,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateItemEditor(msg)
 		case viewCreateTable:
 			return m.updateCreateTable(msg)
-		case viewQuery:
-			return m.updateQuery(msg)
 		case viewConfirmDelete:
 			return m.updateConfirmDelete(msg)
 		case viewConfirmSave:
 			return m.updateConfirmSave(msg)
+		case viewConfirmContinueScan:
+			return m.updateConfirmContinueScan(msg)
 		case viewExport:
 			return m.updateExport(msg)
 		case viewSchema:
@@ -311,6 +338,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case scanResultMsg:
 		m.handleScanResult(msg.result)
+		return m, nil
+
+	case continuousScanMsg:
+		m.handleContinuousScanResult(msg.result)
+		// If timed out and there's more data, ask to continue
+		if msg.result.TimedOut && msg.result.HasMore {
+			m.scanLastKey = msg.result.LastEvaluatedKey
+			m.scanTotalScanned = msg.result.TotalScanned
+			m.scanItemsFound = len(msg.result.Items)
+			m.view = viewConfirmContinueScan
+		}
 		return m, nil
 
 	case queryResultMsg:
@@ -723,54 +761,66 @@ func (m *Model) updateCreateTableFocus() {
 	}
 }
 
-func (m *Model) updateQuery(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.view = viewTableData
-	case "enter":
-		if m.filterBuilder.ActiveField == 1 {
-			// Confirm operator selection
-			m.filterBuilder.NextField()
-		} else {
-			// Execute filter
-			expr, names, values := m.filterBuilder.BuildExpression()
-			m.filterExpr = expr
-			m.filterNames = names
-			m.filterValues = values
+func (m *Model) updateQuery(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc":
 			m.view = viewTableData
-			m.lastKey = nil
-			return m, m.scanTable()
+			return m, nil
+		case "enter":
+			if m.filterBuilder.ActiveField == 1 {
+				// Confirm operator selection
+				m.filterBuilder.NextField()
+			} else {
+				// Execute filter
+				expr, names, values := m.filterBuilder.BuildExpression()
+				m.filterExpr = expr
+				m.filterNames = names
+				m.filterValues = values
+				m.view = viewTableData
+				m.lastKey = nil
+				return m, m.scanTable()
+			}
+			return m, nil
+		case "tab":
+			m.filterBuilder.NextField()
+			return m, nil
+		case "shift+tab":
+			m.filterBuilder.PrevField()
+			return m, nil
+		case "up":
+			if m.filterBuilder.ActiveField == 1 {
+				m.filterBuilder.PrevOperator()
+			} else {
+				m.filterBuilder.PrevCondition()
+			}
+			return m, nil
+		case "down":
+			if m.filterBuilder.ActiveField == 1 {
+				m.filterBuilder.NextOperator()
+			} else {
+				m.filterBuilder.NextCondition()
+			}
+			return m, nil
+		case "ctrl+a":
+			m.filterBuilder.AddCondition()
+			return m, nil
+		case "ctrl+d":
+			m.filterBuilder.RemoveCondition()
+			return m, nil
+		case "ctrl+c":
+			m.filterBuilder.Clear()
+			m.filterExpr = ""
+			m.filterNames = nil
+			m.filterValues = nil
+			return m, nil
 		}
-	case "tab":
-		m.filterBuilder.NextField()
-	case "shift+tab":
-		m.filterBuilder.PrevField()
-	case "up":
-		if m.filterBuilder.ActiveField == 1 {
-			m.filterBuilder.PrevOperator()
-		} else {
-			m.filterBuilder.PrevCondition()
-		}
-	case "down":
-		if m.filterBuilder.ActiveField == 1 {
-			m.filterBuilder.NextOperator()
-		} else {
-			m.filterBuilder.NextCondition()
-		}
-	case "ctrl+a":
-		m.filterBuilder.AddCondition()
-	case "ctrl+d":
-		m.filterBuilder.RemoveCondition()
-	case "ctrl+c":
-		m.filterBuilder.Clear()
-		m.filterExpr = ""
-		m.filterNames = nil
-		m.filterValues = nil
-	default:
-		cmd := m.filterBuilder.Update(msg)
-		return m, cmd
 	}
-	return m, nil
+
+	// Pass all other messages (including unicode runes) to the filter builder
+	cmd := m.filterBuilder.Update(msg)
+	return m, cmd
 }
 
 func (m *Model) updateSelectRegion(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -878,12 +928,19 @@ func (m *Model) describeTable() tea.Cmd {
 
 func (m *Model) scanTable() tea.Cmd {
 	return func() tea.Msg {
-		// Check if we're filtering by partition key - use Query instead
+		// Check if we're filtering by partition key or GSI partition key - use Query instead
 		if m.tableInfo != nil && m.filterExpr != "" && m.filterValues != nil {
-			// Check if any filter is on the partition key with equals
-			for placeholder, value := range m.filterValues {
-				if attrName, ok := m.filterNames["#attr0"]; ok && attrName == m.tableInfo.PartitionKey {
-					// Use Query for partition key lookup
+			// Get the first filter attribute name
+			if attrName, ok := m.filterNames["#attr0"]; ok {
+				var placeholder string
+				for p := range m.filterValues {
+					placeholder = p
+					break
+				}
+				value := m.filterValues[placeholder]
+
+				// Check if it's the table's partition key
+				if attrName == m.tableInfo.PartitionKey {
 					keyCondition := fmt.Sprintf("#pk = %s", placeholder)
 
 					queryInput := dynamo.QueryInput{
@@ -905,9 +962,52 @@ func (m *Model) scanTable() tea.Cmd {
 					}
 					return queryResultMsg{result}
 				}
+
+				// Check if it's a GSI partition key
+				for _, gsi := range m.tableInfo.GSIs {
+					if gsi.PartitionKey == attrName {
+						keyCondition := fmt.Sprintf("#pk = %s", placeholder)
+
+						queryInput := dynamo.QueryInput{
+							TableName:              m.currentTable,
+							IndexName:              gsi.Name,
+							KeyConditionExpression: keyCondition,
+							ExpressionAttributeNames: map[string]string{
+								"#pk": attrName,
+							},
+							ExpressionValues: map[string]interface{}{
+								placeholder: value,
+							},
+							Limit:            m.pageSize,
+							ScanIndexForward: true,
+						}
+
+						result, err := m.client.QueryTable(context.Background(), queryInput)
+						if err != nil {
+							return errMsg{err}
+						}
+						return queryResultMsg{result}
+					}
+				}
 			}
 		}
 
+		// If there's a filter, use continuous scan with 3-minute timeout
+		if m.filterExpr != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			// Store cancel function for potential cancellation
+			m.scanCancel = cancel
+
+			result, err := m.client.ScanTableContinuous(ctx, m.currentTable, int(m.pageSize), nil, m.filterExpr, m.filterNames, m.filterValues)
+			cancel() // Clean up context
+
+			if err != nil {
+				return errMsg{err}
+			}
+			return continuousScanMsg{result: result, totalScanned: result.TotalScanned}
+		}
+
+		// No filter - use simple scan
 		result, err := m.client.ScanTable(context.Background(), m.currentTable, m.pageSize, nil, m.filterExpr, m.filterNames, m.filterValues)
 		if err != nil {
 			return errMsg{err}
@@ -931,6 +1031,28 @@ func (m *Model) handleScanResult(result *dynamo.ScanResult) {
 	m.lastKey = result.LastEvaluatedKey
 	m.loading = false
 	m.statusMsg = fmt.Sprintf("Loaded %d items", result.Count)
+
+	// Convert to table format
+	headers, rows := m.itemsToTable(result.Items)
+	m.dataTable.SetData(headers, rows)
+}
+
+func (m *Model) handleContinuousScanResult(result *dynamo.ContinuousScanResult) {
+	m.items = result.Items
+	m.lastKey = result.LastEvaluatedKey
+	m.loading = false
+
+	statusParts := []string{fmt.Sprintf("Found %d items", len(result.Items))}
+	statusParts = append(statusParts, fmt.Sprintf("(scanned %d records)", result.TotalScanned))
+
+	if result.TimedOut {
+		statusParts = append(statusParts, "- Timeout reached")
+	}
+	if result.HasMore {
+		statusParts = append(statusParts, "- More data available")
+	}
+
+	m.statusMsg = strings.Join(statusParts, " ")
 
 	// Convert to table format
 	headers, rows := m.itemsToTable(result.Items)
@@ -1160,6 +1282,8 @@ func (m Model) View() string {
 		return m.viewConfirmDelete()
 	case viewConfirmSave:
 		return m.viewConfirmSave()
+	case viewConfirmContinueScan:
+		return m.viewConfirmContinueScan()
 	case viewExport:
 		return m.viewExport()
 	case viewSchema:
@@ -1638,6 +1762,71 @@ func (m Model) viewConfirmSave() string {
 	b.WriteString(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content))
 
 	return b.String()
+}
+
+func (m Model) viewConfirmContinueScan() string {
+	var b strings.Builder
+
+	content := ui.ModalStyle.Render(
+		ui.TitleStyle.Render("⏱️ Scan Timeout") + "\n\n" +
+			ui.WarningStyle.Render("The scan has been running for 3 minutes.") + "\n\n" +
+			ui.ItemStyle.Render(fmt.Sprintf("Found: %d items", m.scanItemsFound)) + "\n" +
+			ui.ItemStyle.Render(fmt.Sprintf("Scanned: %d records", m.scanTotalScanned)) + "\n\n" +
+			ui.HelpStyle.Render("The table has more data to scan.") + "\n\n" +
+			ui.HelpStyle.Render("Press Y to continue scanning (3 more minutes)") + "\n" +
+			ui.HelpStyle.Render("Press N to stop with current results"),
+	)
+
+	b.WriteString(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content))
+
+	return b.String()
+}
+
+func (m *Model) updateConfirmContinueScan(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		// Continue scanning
+		m.view = viewTableData
+		m.loading = true
+		m.statusMsg = "Continuing scan..."
+		return m, m.continueScan()
+	case "n", "N", "esc":
+		// Stop scanning, keep current results
+		m.view = viewTableData
+		m.statusMsg = fmt.Sprintf("Scan stopped. Found %d items (scanned %d records)", m.scanItemsFound, m.scanTotalScanned)
+	}
+	return m, nil
+}
+
+func (m *Model) continueScan() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+
+		// Continue from where we left off, but we want to accumulate more items
+		targetCount := m.scanItemsFound + int(m.pageSize)
+
+		result, err := m.client.ScanTableContinuous(ctx, m.currentTable, targetCount, m.scanLastKey, m.filterExpr, m.filterNames, m.filterValues)
+		if err != nil {
+			return errMsg{err}
+		}
+
+		// Append new items to existing ones
+		allItems := make([]map[string]types.AttributeValue, 0, len(m.items)+len(result.Items))
+		allItems = append(allItems, m.items...)
+		allItems = append(allItems, result.Items...)
+
+		// Create a combined result
+		combinedResult := &dynamo.ContinuousScanResult{
+			Items:            allItems,
+			LastEvaluatedKey: result.LastEvaluatedKey,
+			TotalScanned:     m.scanTotalScanned + result.TotalScanned,
+			HasMore:          result.HasMore,
+			TimedOut:         result.TimedOut,
+		}
+
+		return continuousScanMsg{result: combinedResult, totalScanned: combinedResult.TotalScanned}
+	}
 }
 
 func (m Model) viewExport() string {

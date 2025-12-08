@@ -345,6 +345,100 @@ func (c *Client) ScanTable(ctx context.Context, tableName string, limit int32, s
 	}, nil
 }
 
+// ContinuousScanResult contains results from a continuous scan operation
+type ContinuousScanResult struct {
+	Items            []map[string]types.AttributeValue
+	LastEvaluatedKey map[string]types.AttributeValue
+	TotalScanned     int64
+	HasMore          bool
+	TimedOut         bool
+}
+
+// ScanTableContinuous performs a continuous scan until targetCount items are found or table is exhausted
+// It will scan in batches and accumulate results until the target is reached
+// The scan can be cancelled via context
+func (c *Client) ScanTableContinuous(ctx context.Context, tableName string, targetCount int, startKey map[string]types.AttributeValue, filterExpression string, expressionNames map[string]string, expressionValues map[string]interface{}) (*ContinuousScanResult, error) {
+	var allItems []map[string]types.AttributeValue
+	var lastKey map[string]types.AttributeValue = startKey
+	var totalScanned int64 = 0
+	batchSize := int32(500) // Scan in larger batches for efficiency
+
+	// Convert expression values once
+	var attrValues map[string]types.AttributeValue
+	if len(expressionValues) > 0 {
+		attrValues = make(map[string]types.AttributeValue)
+		for k, v := range expressionValues {
+			attrValues[k] = interfaceToAttributeValue(v)
+		}
+	}
+
+	for {
+		// Check if context is cancelled
+		select {
+		case <-ctx.Done():
+			return &ContinuousScanResult{
+				Items:            allItems,
+				LastEvaluatedKey: lastKey,
+				TotalScanned:     totalScanned,
+				HasMore:          lastKey != nil,
+				TimedOut:         true,
+			}, nil
+		default:
+		}
+
+		input := &dynamodb.ScanInput{
+			TableName: aws.String(tableName),
+			Limit:     aws.Int32(batchSize),
+		}
+
+		if lastKey != nil {
+			input.ExclusiveStartKey = lastKey
+		}
+
+		if filterExpression != "" {
+			input.FilterExpression = aws.String(filterExpression)
+			if len(expressionNames) > 0 {
+				input.ExpressionAttributeNames = expressionNames
+			}
+			if attrValues != nil {
+				input.ExpressionAttributeValues = attrValues
+			}
+		}
+
+		output, err := c.db.Scan(ctx, input)
+		if err != nil {
+			// If context was cancelled, return what we have
+			if ctx.Err() != nil {
+				return &ContinuousScanResult{
+					Items:            allItems,
+					LastEvaluatedKey: lastKey,
+					TotalScanned:     totalScanned,
+					HasMore:          true,
+					TimedOut:         true,
+				}, nil
+			}
+			return nil, fmt.Errorf("failed to scan table: %w", err)
+		}
+
+		allItems = append(allItems, output.Items...)
+		totalScanned += int64(output.ScannedCount)
+		lastKey = output.LastEvaluatedKey
+
+		// Check if we have enough items or if we've reached the end
+		if len(allItems) >= targetCount || lastKey == nil {
+			break
+		}
+	}
+
+	return &ContinuousScanResult{
+		Items:            allItems,
+		LastEvaluatedKey: lastKey,
+		TotalScanned:     totalScanned,
+		HasMore:          lastKey != nil,
+		TimedOut:         false,
+	}, nil
+}
+
 // interfaceToAttributeValue converts a Go interface to DynamoDB AttributeValue
 func interfaceToAttributeValue(v interface{}) types.AttributeValue {
 	switch val := v.(type) {
