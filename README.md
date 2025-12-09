@@ -171,14 +171,6 @@ GOOS=windows GOARCH=amd64 go build -o godynamo.exe .
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-### Ideas for Contribution
-- [ ] DynamoDB Local support
-- [ ] Query history
-- [ ] Saved filters
-- [ ] Table backup/restore
-- [ ] PartiQL support
-- [ ] Batch operations
-
 ---
 
 ## 📄 License
