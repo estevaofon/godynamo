@@ -6,14 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/godynamo/internal/app"
-	"github.com/godynamo/internal/console"
 )
-
-func init() {
-	// Set UTF-8 code page on Windows for proper unicode support
-	_ = console.SetupUTF8()
-	_ = console.EnableVirtualTerminal()
-}
 
 func main() {
 	// Create the application model
