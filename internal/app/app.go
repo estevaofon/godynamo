@@ -468,9 +468,9 @@ func (m *Model) updateTables(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.view = viewTableData
 				return m, tea.Batch(m.describeTable(), m.scanTable())
 			}
-		case "up", "ctrl+p":
+		case "up":
 			m.tableList.MoveUp()
-		case "down", "ctrl+n":
+		case "down":
 			m.tableList.MoveDown()
 		case "backspace":
 			if len(m.tableFilter) > 0 {
@@ -480,6 +480,14 @@ func (m *Model) updateTables(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "ctrl+u":
 			m.tableFilter = ""
 			m.applyTableFilter()
+		case "ctrl+n":
+			m.tableFilterMode = false
+			m.view = viewCreateTable
+			m.createTableForm.inputs[0].Focus()
+			m.createTableForm.focusIndex = 0
+		case "ctrl+r":
+			m.tableFilterMode = false
+			return m, m.loadTables()
 		default:
 			// Add character to filter
 			if len(msg.String()) == 1 {
@@ -502,11 +510,11 @@ func (m *Model) updateTables(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.view = viewTableData
 			return m, tea.Batch(m.describeTable(), m.scanTable())
 		}
-	case "c":
+	case "ctrl+n":
 		m.view = viewCreateTable
 		m.createTableForm.inputs[0].Focus()
 		m.createTableForm.focusIndex = 0
-	case "r":
+	case "ctrl+r":
 		return m, m.loadTables()
 	case "/":
 		// Enter filter mode
@@ -1572,7 +1580,7 @@ func (m Model) viewTables() string {
 
 	if len(m.filteredTables) == 0 {
 		if len(m.tables) == 0 {
-			listContent.WriteString(ui.HelpStyle.Render("No tables found. Press 'c' to create one."))
+			listContent.WriteString(ui.HelpStyle.Render("No tables found. Press Ctrl+N to create one."))
 		} else {
 			listContent.WriteString(ui.HelpStyle.Render("No tables match your search."))
 		}
@@ -1618,8 +1626,8 @@ func (m Model) viewTables() string {
 		if len(m.discoveredRegions) > 1 {
 			helpBindings = append(helpBindings, ui.KeyBinding{Key: "Tab", Desc: "Region"})
 		}
-		helpBindings = append(helpBindings, ui.KeyBinding{Key: "c", Desc: "Create"})
-		helpBindings = append(helpBindings, ui.KeyBinding{Key: "r", Desc: "Refresh"})
+		helpBindings = append(helpBindings, ui.KeyBinding{Key: "Ctrl+N", Desc: "Create"})
+		helpBindings = append(helpBindings, ui.KeyBinding{Key: "Ctrl+R", Desc: "Refresh"})
 		helpBindings = append(helpBindings, ui.KeyBinding{Key: "q", Desc: "Back"})
 	}
 
