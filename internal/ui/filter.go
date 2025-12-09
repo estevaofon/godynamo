@@ -409,7 +409,7 @@ func (f *FilterBuilder) View() string {
 	b.WriteString("\n\n")
 
 	// Instructions
-	b.WriteString(HelpStyle.Render("Tab: Next │ ↑↓: Operator │ Ctrl+A: Add │ Ctrl+D: Remove │ Enter: Apply"))
+	b.WriteString(HelpStyle.Render("Tab/Shift+Tab: Navigate │ ↑↓: Operator │ Ctrl+A: Add │ Ctrl+D: Remove │ Enter: Apply"))
 	b.WriteString("\n\n")
 
 	// Labels row
