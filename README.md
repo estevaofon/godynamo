@@ -10,6 +10,8 @@ Built with Go and [Charm](https://charm.sh/) libraries. Free and open source alt
 
 ---
 
+https://github.com/user-attachments/assets/e53d2026-f4e7-4976-bf72-fa64edf743a1
+
 ## ✨ Features
 
 ### 🔗 Smart Connection
