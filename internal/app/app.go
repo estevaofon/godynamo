@@ -165,7 +165,7 @@ func New() Model {
 	m := Model{
 		view:      viewConnect,
 		focus:     focusSidebar,
-		pageSize:  50,
+		pageSize:  500,
 		loading:   true,
 		statusMsg: "Connecting to AWS DynamoDB...",
 	}
@@ -667,6 +667,21 @@ func (m *Model) updateTableData(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filterExpr = ""
 		m.filterNames = nil
 		m.filterValues = nil
+	case "+", "=":
+		// Increase page size
+		if m.pageSize < 1000 {
+			m.pageSize += 100
+			m.statusMsg = fmt.Sprintf("Page size: %d items", m.pageSize)
+		}
+	case "-", "_":
+		// Decrease page size
+		if m.pageSize > 50 {
+			m.pageSize -= 100
+			if m.pageSize < 50 {
+				m.pageSize = 50
+			}
+			m.statusMsg = fmt.Sprintf("Page size: %d items", m.pageSize)
+		}
 	case "tab":
 		if m.focus == focusSidebar {
 			m.focus = focusContent
@@ -938,16 +953,51 @@ func (m *Model) scanTable() tea.Cmd {
 		if m.tableInfo != nil && m.filterExpr != "" && m.filterValues != nil {
 			// Get the first filter attribute name
 			if attrName, ok := m.filterNames["#attr0"]; ok {
-				var placeholder string
+				// Find the placeholder for the first attribute
+				var firstPlaceholder string
 				for p := range m.filterValues {
-					placeholder = p
-					break
+					if strings.HasPrefix(p, ":val0") {
+						firstPlaceholder = p
+						break
+					}
 				}
-				value := m.filterValues[placeholder]
+				if firstPlaceholder == "" {
+					// Fallback to first placeholder found
+					for p := range m.filterValues {
+						firstPlaceholder = p
+						break
+					}
+				}
+				value := m.filterValues[firstPlaceholder]
+
+				// Build additional filter expression for other conditions
+				var additionalFilterExpr string
+				additionalNames := make(map[string]string)
+				additionalValues := make(map[string]interface{})
+
+				// Check if there are multiple conditions
+				if strings.Contains(m.filterExpr, " AND ") {
+					// Split and get conditions after the first one
+					parts := strings.SplitN(m.filterExpr, " AND ", 2)
+					if len(parts) > 1 {
+						additionalFilterExpr = parts[1]
+						// Copy all names and values except the first ones
+						for k, v := range m.filterNames {
+							if k != "#attr0" {
+								additionalNames[k] = v
+							}
+						}
+						for k, v := range m.filterValues {
+							if k != firstPlaceholder {
+								additionalValues[k] = v
+							}
+						}
+					}
+				}
 
 				// Check if it's the table's partition key
 				if attrName == m.tableInfo.PartitionKey {
-					keyCondition := fmt.Sprintf("#pk = %s", placeholder)
+					keyCondition := fmt.Sprintf("#pk = %s", firstPlaceholder)
 
 					queryInput := dynamo.QueryInput{
 						TableName:              m.currentTable,
@@ -956,10 +1006,21 @@ func (m *Model) scanTable() tea.Cmd {
 							"#pk": m.tableInfo.PartitionKey,
 						},
 						ExpressionValues: map[string]interface{}{
-							placeholder: value,
+							firstPlaceholder: value,
 						},
 						Limit:            m.pageSize,
 						ScanIndexForward: true,
+					}
+
+					// Add additional filter if present
+					if additionalFilterExpr != "" {
+						queryInput.FilterExpression = additionalFilterExpr
+						for k, v := range additionalNames {
+							queryInput.ExpressionAttributeNames[k] = v
+						}
+						for k, v := range additionalValues {
+							queryInput.ExpressionValues[k] = v
+						}
 					}
 
 					result, err := m.client.QueryTable(context.Background(), queryInput)
@@ -972,7 +1033,7 @@ func (m *Model) scanTable() tea.Cmd {
 				// Check if it's a GSI partition key
 				for _, gsi := range m.tableInfo.GSIs {
 					if gsi.PartitionKey == attrName {
-						keyCondition := fmt.Sprintf("#pk = %s", placeholder)
+						keyCondition := fmt.Sprintf("#pk = %s", firstPlaceholder)
 
 						queryInput := dynamo.QueryInput{
 							TableName:              m.currentTable,
@@ -982,10 +1043,21 @@ func (m *Model) scanTable() tea.Cmd {
 								"#pk": attrName,
 							},
 							ExpressionValues: map[string]interface{}{
-								placeholder: value,
+								firstPlaceholder: value,
 							},
 							Limit:            m.pageSize,
 							ScanIndexForward: true,
+						}
+
+						// Add additional filter if present
+						if additionalFilterExpr != "" {
+							queryInput.FilterExpression = additionalFilterExpr
+							for k, v := range additionalNames {
+								queryInput.ExpressionAttributeNames[k] = v
+							}
+							for k, v := range additionalValues {
+								queryInput.ExpressionValues[k] = v
+							}
 						}
 
 						result, err := m.client.QueryTable(context.Background(), queryInput)
@@ -1036,7 +1108,7 @@ func (m *Model) handleScanResult(result *dynamo.ScanResult) {
 	m.items = result.Items
 	m.lastKey = result.LastEvaluatedKey
 	m.loading = false
-	m.statusMsg = fmt.Sprintf("Loaded %d items", result.Count)
+	m.statusMsg = fmt.Sprintf("Loaded %d items (page size: %d)", result.Count, m.pageSize)
 
 	// Convert to table format
 	headers, rows := m.itemsToTable(result.Items)
