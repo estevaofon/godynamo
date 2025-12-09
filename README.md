@@ -1,271 +1,199 @@
 # ⚡ GoDynamo
 
-A powerful DynamoDB client for your terminal. A lightweight clone of Dynobase built with Go.
+**A fast, lightweight DynamoDB client for your terminal.**
 
-![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go)
+Built with Go and [Charm](https://charm.sh/) libraries. Free and open source alternative to Dynobase.
+
+![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat-square&logo=go)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
+![Platform](https://img.shields.io/badge/Platform-Windows%20|%20Linux%20|%20macOS-blue?style=flat-square)
+
+---
 
 ## ✨ Features
 
-- 🔗 **Connect** to AWS DynamoDB or DynamoDB Local
-- 📋 **List & Browse** all your tables
-- 🔍 **Scan & Query** table data with pagination
-- ✏️ **Create, Edit, Delete** items with JSON editor
-- 🏗️ **Create & Delete** tables
-- 🎯 **Filter** data with DynamoDB expressions
-- 📦 **Export** data to JSON or CSV
-- 🎨 Beautiful cyberpunk-themed terminal UI
+### 🔗 Smart Connection
+- **Auto-connect** to AWS using your configured credentials
+- **Multi-region discovery** - automatically finds regions with tables
+- **Region dropdown** - easily switch between regions
+
+### 📋 Table Management
+- **List tables** with fuzzy search filtering
+- **View schema** in JSON format
+- **Navigate** with keyboard shortcuts
+
+### 🔍 Powerful Querying
+- **Visual Filter Builder** - no need to memorize DynamoDB syntax
+- **Smart Query Detection** - automatically uses GSI indexes when available
+- **Continuous Scan** - searches until finding results (with 3-min timeout)
+- **Operators**: Equals, Not Equals, Greater/Less Than, Contains, Begins With, Exists
+
+### ✏️ Data Operations
+- **View items** with JSON syntax highlighting
+- **Create, Edit, Delete** items with built-in JSON editor
+- **Copy values** - single cell or entire row as JSON
+- **Horizontal scrolling** for wide tables
+
+### 📦 Export
+- **JSON format** - full DynamoDB structure
+- **CSV format** - for spreadsheets
+
+### 🎨 User Experience
+- **Cyberpunk theme** - beautiful terminal aesthetics
+- **Keyboard-first** - efficient navigation
+- **Unicode support** - works with accented characters
+- **SSH friendly** - works on remote servers
+
+---
 
 ## 📦 Installation
+
+### Pre-built Binaries
+
+Download from [Releases](https://github.com/yourusername/godynamo/releases):
+
+```bash
+# Linux
+curl -L https://github.com/yourusername/godynamo/releases/latest/download/godynamo-linux-amd64 -o godynamo
+chmod +x godynamo
+
+# macOS
+curl -L https://github.com/yourusername/godynamo/releases/latest/download/godynamo-darwin-amd64 -o godynamo
+chmod +x godynamo
+
+# Windows - download godynamo-windows-amd64.exe
+```
 
 ### From Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/yourusername/godynamo.git
 cd godynamo
-
-# Download dependencies
-go mod tidy
-
-# Build
 go build -o godynamo .
-
-# Run
 ./godynamo
 ```
 
-### Using Go Install
+### Go Install
 
 ```bash
-go install github.com/godynamo@latest
+go install github.com/yourusername/godynamo@latest
 ```
+
+---
 
 ## 🚀 Quick Start
 
-### With DynamoDB Local
-
-1. Start DynamoDB Local (using Docker):
-```bash
-docker run -p 8000:8000 amazon/dynamodb-local
-```
-
-2. Run GoDynamo:
-```bash
-./godynamo
-```
-
-3. Use default settings to connect:
-   - Endpoint: `http://localhost:8000`
-   - Region: `us-east-1`
-   - Access Key: `local`
-   - Secret Key: `local`
-
-### With AWS DynamoDB
-
-1. Configure your AWS credentials:
+1. **Configure AWS credentials** (if not already done):
 ```bash
 aws configure
 ```
 
-2. Run GoDynamo:
+2. **Run GoDynamo**:
 ```bash
 ./godynamo
 ```
 
-3. Configure connection:
-   - Leave endpoint empty for AWS
-   - Set your region (e.g., `us-east-1`)
-   - Uncheck "Use Local DynamoDB"
+3. **That's it!** GoDynamo will:
+   - Detect your AWS credentials
+   - Scan all regions for DynamoDB tables
+   - Show you a region selector (if multiple regions have tables)
 
-## ⌨️ Keyboard Shortcuts
+---
 
-### Global
-| Key | Action |
-|-----|--------|
-| `Ctrl+Q` | Quit |
-| `Ctrl+C` | Quit |
+## 🎯 Filter Builder
 
-### Connection Screen
-| Key | Action |
-|-----|--------|
-| `Tab` | Next field |
-| `Shift+Tab` | Previous field |
-| `Space` | Toggle checkbox |
-| `Enter` | Connect |
+GoDynamo features a visual filter builder - no need to remember DynamoDB expression syntax!
 
-### Tables List
-| Key | Action |
-|-----|--------|
-| `↑/↓` or `j/k` | Navigate |
-| `Enter` | Open table |
-| `c` | Create table |
-| `d` | Delete table |
-| `r` | Refresh |
-| `q` | Back |
+### Available Operators
 
-### Table Data View
-| Key | Action |
-|-----|--------|
-| `↑/↓/←/→` | Navigate |
-| `Enter` | View item |
-| `n` | New item |
-| `e` | Edit item |
-| `d` | Delete item |
-| `f` | Filter |
-| `x` | Export |
-| `PgDown` | Next page |
-| `r` | Refresh |
-| `q` | Back |
+| Operator | Symbol | Description |
+|----------|--------|-------------|
+| Equals | `=` | Exact match |
+| Not Equals | `≠` | Not equal |
+| Greater Than | `>` | Greater than |
+| Less Than | `<` | Less than |
+| Greater or Equal | `≥` | Greater or equal |
+| Less or Equal | `≤` | Less or equal |
+| Contains | `∋` | String contains |
+| Not Contains | `∌` | String doesn't contain |
+| Begins With | `⊃` | String starts with |
+| Exists | `∃` | Attribute exists |
+| Not Exists | `∄` | Attribute doesn't exist |
 
-### Item Editor
-| Key | Action |
-|-----|--------|
-| `Ctrl+S` | Save |
-| `Esc` | Cancel |
+### Smart Query Detection
 
-### Filter/Query
-| Key | Action |
-|-----|--------|
-| `Ctrl+Enter` | Execute |
-| `Ctrl+C` | Clear |
-| `Esc` | Cancel |
+When you filter by:
+- **Partition Key** → Uses efficient `Query` operation
+- **GSI Partition Key** → Uses `Query` on the index
+- **Other attributes** → Uses `Scan` with continuous pagination
 
-## 🎨 Screenshots
+---
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                      ╔═══════════════════╗                       │
-│                      ║   ⚡ GoDynamo     ║                       │
-│                      ╚═══════════════════╝                       │
-│                                                                  │
-│                     Connect to DynamoDB                          │
-│                                                                  │
-│  Endpoint                                                        │
-│  ╭──────────────────────────────────────────────────────────╮   │
-│  │ http://localhost:8000                                     │   │
-│  ╰──────────────────────────────────────────────────────────╯   │
-│                                                                  │
-│  Region                                                          │
-│  ╭──────────────────────────────────────────────────────────╮   │
-│  │ us-east-1                                                 │   │
-│  ╰──────────────────────────────────────────────────────────╯   │
-│                                                                  │
-│  [✓] Use Local DynamoDB                                          │
-│                                                                  │
-│                      [ Connect ]                                 │
-│                                                                  │
-│     Tab: Next field │ Enter: Connect │ Ctrl+Q: Quit             │
-└──────────────────────────────────────────────────────────────────┘
-```
+## 🔧 AWS Configuration
 
-## 🔧 Configuration
+GoDynamo uses AWS SDK v2 and supports all standard authentication methods:
 
-GoDynamo uses AWS SDK v2, which supports various authentication methods:
+- **Environment Variables** (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+- **Credentials File** (`~/.aws/credentials`)
+- **Config File** (`~/.aws/config`)
+- **IAM Roles** (EC2, ECS, Lambda)
+- **AWS SSO** (`aws sso login`)
 
-1. **Environment Variables**
-   ```bash
-   export AWS_ACCESS_KEY_ID=your_key
-   export AWS_SECRET_ACCESS_KEY=your_secret
-   export AWS_REGION=us-east-1
-   ```
+---
 
-2. **AWS Credentials File** (`~/.aws/credentials`)
-   ```ini
-   [default]
-   aws_access_key_id = your_key
-   aws_secret_access_key = your_secret
-   ```
-
-3. **AWS Config File** (`~/.aws/config`)
-   ```ini
-   [default]
-   region = us-east-1
-   ```
-
-4. **IAM Roles** (for EC2/ECS/Lambda)
-
-## 📝 Filter Expressions
-
-GoDynamo supports DynamoDB filter expressions:
-
-```
-# Check if attribute exists
-attribute_exists(email)
-
-# Contains substring
-contains(name, "john")
-
-# Comparison
-age >= 18
-price BETWEEN 10 AND 100
-
-# Multiple conditions
-attribute_exists(email) AND age >= 18
-```
-
-## 🛠️ Development
-
-### Project Structure
-
-```
-godynamo/
-├── main.go                 # Entry point
-├── go.mod                  # Go modules
-├── internal/
-│   ├── app/
-│   │   └── app.go         # Main application logic
-│   ├── dynamo/
-│   │   └── client.go      # DynamoDB client wrapper
-│   ├── models/
-│   │   └── models.go      # Data models & converters
-│   └── ui/
-│       ├── styles.go      # UI styles & colors
-│       ├── components.go  # Reusable UI components
-│       └── json_viewer.go # JSON syntax highlighting
-└── README.md
-```
-
-### Building
+## 🏗️ Building
 
 ```bash
 # Development
 go run .
 
-# Production build
+# Production build (smaller binary)
 go build -ldflags="-s -w" -o godynamo .
 
-# Cross-compile for Linux
+# Cross-compile
 GOOS=linux GOARCH=amd64 go build -o godynamo-linux .
-
-# Cross-compile for Windows
+GOOS=darwin GOARCH=amd64 go build -o godynamo-darwin .
 GOOS=windows GOARCH=amd64 go build -o godynamo.exe .
 ```
 
-### Dependencies
+---
+
+## 📦 Dependencies
 
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
 - [Bubbles](https://github.com/charmbracelet/bubbles) - TUI components
-- [Lip Gloss](https://github.com/charmbracelet/lipgloss) - Styling
+- [Lip Gloss](https://github.com/charmbracelet/lipgloss) - Terminal styling
 - [AWS SDK Go v2](https://github.com/aws/aws-sdk-go-v2) - DynamoDB client
 
-## 📄 License
-
-MIT License - feel free to use this project for any purpose.
+---
 
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing`)
-5. Open a Pull Request
+### Ideas for Contribution
+- [ ] DynamoDB Local support
+- [ ] Query history
+- [ ] Saved filters
+- [ ] Table backup/restore
+- [ ] PartiQL support
+- [ ] Batch operations
+
+---
+
+## 📄 License
+
+MIT License - feel free to use this project for any purpose.
+
+---
 
 ## 🙏 Acknowledgments
 
 - Inspired by [Dynobase](https://dynobase.dev/)
 - Built with [Charm](https://charm.sh/) libraries
-- DynamoDB by AWS
 
+---
+
+<p align="center">
+  <sub>Made with ❤️ and Go</sub>
+</p>
