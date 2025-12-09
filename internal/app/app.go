@@ -524,6 +524,12 @@ func (m *Model) updateTables(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.view = viewConnect
 		}
+	case "backspace":
+		// Clear filter if there's residual text from previous search
+		if m.tableFilter != "" {
+			m.tableFilter = ""
+			m.applyTableFilter()
+		}
 	default:
 		// Quick filter: start typing to filter
 		if len(msg.String()) == 1 && msg.String() != " " {
