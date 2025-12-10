@@ -615,17 +615,6 @@ func (c *Client) CreateTable(ctx context.Context, input CreateTableInput) error 
 	return nil
 }
 
-// DeleteTable removes a table
-func (c *Client) DeleteTable(ctx context.Context, tableName string) error {
-	_, err := c.db.DeleteTable(ctx, &dynamodb.DeleteTableInput{
-		TableName: aws.String(tableName),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to delete table: %w", err)
-	}
-	return nil
-}
-
 // GetItem retrieves a single item
 func (c *Client) GetItem(ctx context.Context, tableName string, key map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
 	output, err := c.db.GetItem(ctx, &dynamodb.GetItemInput{

@@ -37,10 +37,9 @@ type (
 		itemsFound   int
 		totalScanned int64
 	}
-	itemSavedMsg      struct{}
-	itemDeletedMsg    struct{}
-	tableCreatedMsg   struct{}
-	tableDeletedMsg   struct{}
+	itemSavedMsg    struct{}
+	itemDeletedMsg  struct{}
+	tableCreatedMsg struct{}
 	connectionTestMsg struct {
 		success bool
 		err     error
@@ -146,7 +145,6 @@ type Model struct {
 
 	// Confirm delete
 	deleteTarget string
-	deleteType   string // "item" or "table"
 
 	// Export
 	exportFormat string
@@ -369,12 +367,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tableCreatedMsg:
 		m.statusMsg = "Table created successfully"
-		m.loading = false
-		m.view = viewTables
-		return m, m.loadTables()
-
-	case tableDeletedMsg:
-		m.statusMsg = "Table deleted successfully"
 		m.loading = false
 		m.view = viewTables
 		return m, m.loadTables()
@@ -623,7 +615,6 @@ func (m *Model) updateTableData(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		if m.dataTable.SelectedRow < len(m.items) {
 			m.selectedItem = m.items[m.dataTable.SelectedRow]
-			m.deleteType = "item"
 			m.view = viewConfirmDelete
 		}
 	case "y":
@@ -710,7 +701,6 @@ func (m *Model) updateItemDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.view = viewEditItem
 		m.itemEditor.Focus()
 	case "d":
-		m.deleteType = "item"
 		m.view = viewConfirmDelete
 	case "y", "Y":
 		// Copy item as JSON
@@ -874,17 +864,9 @@ func (m *Model) updateSelectRegion(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
-		if m.deleteType == "item" {
-			return m, m.deleteItem()
-		} else if m.deleteType == "table" {
-			return m, m.deleteTable()
-		}
+		return m, m.deleteItem()
 	case "n", "N", "esc":
-		if m.deleteType == "item" {
-			m.view = viewTableData
-		} else {
-			m.view = viewTables
-		}
+		m.view = viewTableData
 	}
 	return m, nil
 }
@@ -1280,17 +1262,6 @@ func (m *Model) createTable() tea.Cmd {
 		}
 
 		return tableCreatedMsg{}
-	}
-}
-
-func (m *Model) deleteTable() tea.Cmd {
-	return func() tea.Msg {
-		err := m.client.DeleteTable(context.Background(), m.deleteTarget)
-		if err != nil {
-			return errMsg{err}
-		}
-
-		return tableDeletedMsg{}
 	}
 }
 
@@ -1698,7 +1669,9 @@ func (m Model) viewTableData() string {
 		{Key: "y", Desc: "Copy"},
 		{Key: "n", Desc: "New"},
 		{Key: "e", Desc: "Edit"},
+		{Key: "d", Desc: "Delete"},
 		{Key: "f", Desc: "Filter"},
+		{Key: "x", Desc: "Export"},
 		{Key: "s", Desc: "Schema"},
 		{Key: "q", Desc: "Back"},
 	})
@@ -1826,16 +1799,9 @@ func (m Model) viewQuery() string {
 func (m Model) viewConfirmDelete() string {
 	var b strings.Builder
 
-	var message string
-	if m.deleteType == "item" {
-		message = "Are you sure you want to delete this item?"
-	} else {
-		message = fmt.Sprintf("Are you sure you want to delete table '%s'?", m.deleteTarget)
-	}
-
 	content := ui.ModalStyle.Render(
 		ui.TitleStyle.Render("⚠️ Confirm Delete") + "\n\n" +
-			ui.WarningStyle.Render(message) + "\n\n" +
+			ui.WarningStyle.Render("Are you sure you want to delete this item?") + "\n\n" +
 			ui.HelpStyle.Render("Press Y to confirm, N to cancel"),
 	)
 
