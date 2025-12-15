@@ -228,8 +228,14 @@ func (m *Model) initItemEditor() {
 }`
 	ta.SetHeight(30)
 	ta.SetWidth(100)
-	ta.ShowLineNumbers = true
-	ta.CharLimit = 0 // No limit
+	ta.ShowLineNumbers = false // Disabled for clean copy/paste with mouse
+	ta.CharLimit = 0           // No limit
+
+	// Use SetPromptFunc to completely remove the prompt character
+	ta.SetPromptFunc(0, func(lineIdx int) string {
+		return ""
+	})
+
 	m.itemEditor = ta
 }
 
@@ -264,6 +270,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateQuery(msg)
 	}
 
+	// Handle item editor views separately to support full textarea functionality (Enter, etc.)
+	if m.view == viewCreateItem || m.view == viewEditItem {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "ctrl+c", "ctrl+q":
+				return m, tea.Quit
+			}
+		}
+		return m.updateItemEditor(msg)
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -296,8 +313,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateTableData(msg)
 		case viewItemDetail:
 			return m.updateItemDetail(msg)
-		case viewCreateItem, viewEditItem:
-			return m.updateItemEditor(msg)
 		case viewCreateTable:
 			return m.updateCreateTable(msg)
 		case viewConfirmDelete:
@@ -724,24 +739,28 @@ func (m *Model) updateItemDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) updateItemEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.view = viewTableData
-	case "ctrl+s":
-		// Validate JSON before showing confirmation
-		_, err := models.JSONToItem(m.itemEditor.Value())
-		if err != nil {
-			m.statusMsg = "Invalid JSON: " + err.Error()
+func (m *Model) updateItemEditor(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc":
+			m.view = viewTableData
+			return m, nil
+		case "ctrl+s":
+			// Validate JSON before showing confirmation
+			_, err := models.JSONToItem(m.itemEditor.Value())
+			if err != nil {
+				m.statusMsg = "Invalid JSON: " + err.Error()
+				return m, nil
+			}
+			m.view = viewConfirmSave
 			return m, nil
 		}
-		m.view = viewConfirmSave
-	default:
-		var cmd tea.Cmd
-		m.itemEditor, cmd = m.itemEditor.Update(msg)
-		return m, cmd
 	}
-	return m, nil
+	// Pass all messages to the textarea (including Enter key for new lines)
+	var cmd tea.Cmd
+	m.itemEditor, cmd = m.itemEditor.Update(msg)
+	return m, cmd
 }
 
 func (m *Model) updateCreateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1687,7 +1706,8 @@ func (m Model) viewItemDetail() string {
 	b.WriteString(header)
 	b.WriteString("\n\n")
 
-	b.WriteString(ui.ContentStyle.Width(m.width - 10).Render(m.itemViewport.View()))
+	// Use style without borders for clean copy/paste with mouse
+	b.WriteString(ui.ContentNoBorderStyle.Width(m.width - 10).Render(m.itemViewport.View()))
 	b.WriteString("\n\n")
 
 	help := ui.RenderHelp([]ui.KeyBinding{
@@ -1716,7 +1736,8 @@ func (m Model) viewItemEditor() string {
 	b.WriteString(ui.HelpStyle.Render("Enter JSON for the item:"))
 	b.WriteString("\n\n")
 
-	b.WriteString(ui.ContentStyle.Width(m.width - 10).Render(m.itemEditor.View()))
+	// Use style without borders for clean copy/paste with mouse
+	b.WriteString(ui.ContentNoBorderStyle.Width(m.width - 10).Render(m.itemEditor.View()))
 	b.WriteString("\n\n")
 
 	if m.err != nil {

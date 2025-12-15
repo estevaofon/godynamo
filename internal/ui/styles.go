@@ -62,6 +62,10 @@ var (
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorSecondary)
 
+	// Content area without borders (for clean copy/paste with mouse)
+	ContentNoBorderStyle = lipgloss.NewStyle().
+		Padding(1, 2)
+
 	// Selected item
 	SelectedStyle = lipgloss.NewStyle().
 		Bold(true).
@@ -264,6 +268,7 @@ func PadRight(s string, width int) string {
 	}
 	return s + lipgloss.NewStyle().Width(width-len(s)).Render("")
 }
+
 
 
 
