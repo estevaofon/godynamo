@@ -16,7 +16,11 @@ type JSONViewer struct {
 	// Search state
 	SearchQuery  string
 	TotalMatches int
-	CurrentMatch int // 0-indexed
+	CurrentMatch int   // 0-indexed
+	MatchLines   []int // Line number for each match
+
+	// Internal render state
+	currentLine int
 }
 
 // NewJSONViewer creates a new JSONViewer
@@ -31,23 +35,33 @@ func NewJSONViewer(data interface{}) *JSONViewer {
 // Render returns a syntax-highlighted string representation
 func (j *JSONViewer) Render() string {
 	j.TotalMatches = 0
-	return j.renderValue(j.Data, 0, "root")
+	j.MatchLines = make([]int, 0)
+	j.currentLine = 0
+
+	var sb strings.Builder
+	j.renderNode(&sb, j.Data, 0, "root")
+	return sb.String()
 }
 
-func (j *JSONViewer) renderValue(v interface{}, indent int, path string) string {
+func (j *JSONViewer) write(sb *strings.Builder, s string) {
+	sb.WriteString(s)
+	// Update current line count
+	j.currentLine += strings.Count(s, "\n")
+}
+
+func (j *JSONViewer) renderNode(sb *strings.Builder, v interface{}, indent int, path string) {
 	indentStr := strings.Repeat(" ", indent)
 
 	strVal := ""
-	var result string
 
 	switch val := v.(type) {
 	case nil:
 		strVal = "null"
-		result = JSONNullStyle.Render(j.highlightText(strVal))
+		j.write(sb, JSONNullStyle.Render(j.highlightText(strVal)))
 
 	case bool:
 		strVal = fmt.Sprintf("%v", val)
-		result = JSONBoolStyle.Render(j.highlightText(strVal))
+		j.write(sb, JSONBoolStyle.Render(j.highlightText(strVal)))
 
 	case float64:
 		// Check if it's an integer
@@ -56,65 +70,62 @@ func (j *JSONViewer) renderValue(v interface{}, indent int, path string) string 
 		} else {
 			strVal = fmt.Sprintf("%v", val)
 		}
-		result = JSONNumberStyle.Render(j.highlightText(strVal))
+		j.write(sb, JSONNumberStyle.Render(j.highlightText(strVal)))
 
 	case int64:
 		strVal = fmt.Sprintf("%d", val)
-		result = JSONNumberStyle.Render(j.highlightText(strVal))
+		j.write(sb, JSONNumberStyle.Render(j.highlightText(strVal)))
 
 	case int:
 		strVal = fmt.Sprintf("%d", val)
-		result = JSONNumberStyle.Render(j.highlightText(strVal))
+		j.write(sb, JSONNumberStyle.Render(j.highlightText(strVal)))
 
 	case string:
 		// For strings, we need to handle highlighting within the quotes
-		// First, get the JSON escaped string including quotes
 		escaped, _ := json.Marshal(val)
 		strEscaped := string(escaped)
 
 		// If we're searching, we might need to highlight inside the string
 		if j.SearchQuery != "" && strings.Contains(strings.ToLower(val), strings.ToLower(j.SearchQuery)) {
-			// This is complex because we want to highlight the unescaped content but render escaped
-			// For simplicity in TUI, we'll highlight the search term in the escaped string if found
-			// A better approach would be to highlight segments, but lipgloss styles the whole block
-			// So we'll use a helper to style parts of the string
-			result = JSONStringStyle.Render(j.highlightText(strEscaped))
+			j.write(sb, JSONStringStyle.Render(j.highlightText(strEscaped)))
 		} else {
-			result = JSONStringStyle.Render(strEscaped)
+			j.write(sb, JSONStringStyle.Render(strEscaped))
 		}
 
 	case []interface{}:
 		if len(val) == 0 {
-			return "[]"
+			j.write(sb, "[]")
+			return
 		}
 
 		if j.Collapsed[path] {
-			return fmt.Sprintf("[...] %s", HelpStyle.Render(fmt.Sprintf("(%d items)", len(val))))
+			j.write(sb, fmt.Sprintf("[...] %s", HelpStyle.Render(fmt.Sprintf("(%d items)", len(val)))))
+			return
 		}
 
-		var b strings.Builder
-		b.WriteString("[\n")
+		j.write(sb, "[\n")
 		for i, item := range val {
 			itemPath := fmt.Sprintf("%s[%d]", path, i)
-			b.WriteString(indentStr)
-			b.WriteString(strings.Repeat(" ", j.Indent))
-			b.WriteString(j.renderValue(item, indent+j.Indent, itemPath))
+			j.write(sb, indentStr)
+			j.write(sb, strings.Repeat(" ", j.Indent))
+			j.renderNode(sb, item, indent+j.Indent, itemPath)
 			if i < len(val)-1 {
-				b.WriteString(",")
+				j.write(sb, ",")
 			}
-			b.WriteString("\n")
+			j.write(sb, "\n")
 		}
-		b.WriteString(indentStr)
-		b.WriteString("]")
-		return b.String()
+		j.write(sb, indentStr)
+		j.write(sb, "]")
 
 	case map[string]interface{}:
 		if len(val) == 0 {
-			return "{}"
+			j.write(sb, "{}")
+			return
 		}
 
 		if j.Collapsed[path] {
-			return fmt.Sprintf("{...} %s", HelpStyle.Render(fmt.Sprintf("(%d keys)", len(val))))
+			j.write(sb, fmt.Sprintf("{...} %s", HelpStyle.Render(fmt.Sprintf("(%d keys)", len(val)))))
+			return
 		}
 
 		// Sort keys for consistent output
@@ -124,37 +135,33 @@ func (j *JSONViewer) renderValue(v interface{}, indent int, path string) string 
 		}
 		sort.Strings(keys)
 
-		var b strings.Builder
-		b.WriteString("{\n")
+		j.write(sb, "{\n")
 		for i, k := range keys {
 			keyPath := fmt.Sprintf("%s.%s", path, k)
-			b.WriteString(indentStr)
-			b.WriteString(strings.Repeat(" ", j.Indent))
+			j.write(sb, indentStr)
+			j.write(sb, strings.Repeat(" ", j.Indent))
 
 			// Highlight key if it matches
 			keyStr := fmt.Sprintf("\"%s\"", k)
 			if j.SearchQuery != "" {
-				b.WriteString(JSONKeyStyle.Render(j.highlightText(keyStr)))
+				j.write(sb, JSONKeyStyle.Render(j.highlightText(keyStr)))
 			} else {
-				b.WriteString(JSONKeyStyle.Render(keyStr))
+				j.write(sb, JSONKeyStyle.Render(keyStr))
 			}
 
-			b.WriteString(": ")
-			b.WriteString(j.renderValue(val[k], indent+j.Indent, keyPath))
+			j.write(sb, ": ")
+			j.renderNode(sb, val[k], indent+j.Indent, keyPath)
 			if i < len(keys)-1 {
-				b.WriteString(",")
+				j.write(sb, ",")
 			}
-			b.WriteString("\n")
+			j.write(sb, "\n")
 		}
-		b.WriteString(indentStr)
-		b.WriteString("}")
-		return b.String()
+		j.write(sb, indentStr)
+		j.write(sb, "}")
 
 	default:
-		return fmt.Sprintf("%v", val)
+		j.write(sb, fmt.Sprintf("%v", val))
 	}
-
-	return result
 }
 
 func (j *JSONViewer) highlightText(text string) string {
@@ -168,10 +175,6 @@ func (j *JSONViewer) highlightText(text string) string {
 	if !strings.Contains(lowerText, lowerQuery) {
 		return text
 	}
-
-	// Simple case: split by query and join with styled query
-	// Note: this doesn't preserve case of the query in the original text if we just join with SearchQuery
-	// We need to find indices to preserve original casing
 
 	var sb strings.Builder
 	currentIndex := 0
@@ -196,8 +199,11 @@ func (j *JSONViewer) highlightText(text string) string {
 		}
 
 		sb.WriteString(style.Render(matchContent))
-		j.TotalMatches++
 
+		// Record the line number for this match
+		j.MatchLines = append(j.MatchLines, j.currentLine)
+
+		j.TotalMatches++
 		currentIndex = absoluteIdx + len(lowerQuery)
 	}
 

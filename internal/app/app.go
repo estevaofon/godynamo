@@ -711,6 +711,26 @@ func (m *Model) updateTableData(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// Helper to scroll to the current match
+func (m *Model) scrollToCurrentMatch() {
+	if m.jsonViewer == nil || m.jsonViewer.TotalMatches == 0 || len(m.jsonViewer.MatchLines) <= m.jsonViewer.CurrentMatch {
+		return
+	}
+
+	targetLine := m.jsonViewer.MatchLines[m.jsonViewer.CurrentMatch]
+	viewportHeight := m.itemViewport.Height
+
+	// Calculate offset to center the match
+	offset := targetLine - (viewportHeight / 2)
+	if offset < 0 {
+		offset = 0
+	}
+
+	// Ensure we don't scroll past the end (though Viewport.SetYOffset handles this partially,
+	// it's good to be explicit or let the viewport handle bounds)
+	m.itemViewport.SetYOffset(offset)
+}
+
 func (m *Model) updateItemDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle search input
 	if m.searchMode {
@@ -723,11 +743,13 @@ func (m *Model) updateItemDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			m.searchMode = false
+			m.scrollToCurrentMatch()
 			return m, nil
 		case "ctrl+n", "n":
 			if m.jsonViewer.TotalMatches > 0 {
 				m.jsonViewer.CurrentMatch = (m.jsonViewer.CurrentMatch + 1) % m.jsonViewer.TotalMatches
 				m.updateItemViewContent()
+				m.scrollToCurrentMatch()
 			}
 			return m, nil
 		case "ctrl+p", "N":
@@ -737,6 +759,7 @@ func (m *Model) updateItemDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.jsonViewer.CurrentMatch = m.jsonViewer.TotalMatches - 1
 				}
 				m.updateItemViewContent()
+				m.scrollToCurrentMatch()
 			}
 			return m, nil
 		}
@@ -749,6 +772,13 @@ func (m *Model) updateItemDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Reset current match when query changes
 		m.jsonViewer.CurrentMatch = 0
 		m.updateItemViewContent()
+
+		// Optional: auto-scroll to first match while typing?
+		// Might be distracting, let's stick to explicit navigation for now,
+		// or maybe just scroll if we have matches
+		if m.jsonViewer.TotalMatches > 0 {
+			m.scrollToCurrentMatch()
+		}
 
 		return m, cmd
 	}
@@ -765,6 +795,7 @@ func (m *Model) updateItemDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.jsonViewer.TotalMatches > 0 {
 			m.jsonViewer.CurrentMatch = (m.jsonViewer.CurrentMatch + 1) % m.jsonViewer.TotalMatches
 			m.updateItemViewContent()
+			m.scrollToCurrentMatch()
 		}
 	case "N":
 		if m.jsonViewer.TotalMatches > 0 {
@@ -773,6 +804,7 @@ func (m *Model) updateItemDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.jsonViewer.CurrentMatch = m.jsonViewer.TotalMatches - 1
 			}
 			m.updateItemViewContent()
+			m.scrollToCurrentMatch()
 		}
 	case "e":
 		jsonStr, _ := models.ItemToJSON(m.selectedItem, true)
@@ -1797,13 +1829,7 @@ func (m Model) viewItemDetail() string {
 	b.WriteString("\n")
 
 	// Content
-	b.WriteString(lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ui.ColorSecondary).
-		Padding(1, 2).
-		Width(m.width - 6).
-		Height(m.height - 10).
-		Render(m.itemViewport.View()))
+	b.WriteString(ui.ContentNoBorderStyle.Width(m.width - 6).Render(m.itemViewport.View()))
 
 	// Footer Help
 	help := ui.RenderHelp([]ui.KeyBinding{
