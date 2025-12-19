@@ -12,14 +12,15 @@ import (
 
 	"github.com/atotto/clipboard"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
 	"github.com/godynamo/internal/dynamo"
 	"github.com/godynamo/internal/models"
 	"github.com/godynamo/internal/ui"
+	"github.com/godynamo/internal/ui/textarea"
 )
 
 // Messages
@@ -143,6 +144,12 @@ type Model struct {
 	// Item Search
 	searchInput textinput.Model
 	searchMode  bool
+
+	// Editor Visual Mode
+	visualMode        bool
+	visualSelectMode  bool
+	selectionStartRow int
+	selectionStartCol int
 
 	// Create table form
 	createTableForm createTableForm
@@ -843,9 +850,177 @@ func (m *Model) updateItemViewContent() {
 	m.itemViewport.SetContent(content)
 }
 
+// Helper to get logical cursor position
+func getCursorPos(m textarea.Model) (int, int) {
+	return m.LogicalCursor()
+}
+
+func extractText(text string, startRow, startCol, endRow, endCol int) string {
+	lines := strings.Split(text, "\n")
+
+	// Normalize start/end
+	if startRow > endRow || (startRow == endRow && startCol > endCol) {
+		startRow, endRow = endRow, startRow
+		startCol, endCol = endCol, startCol
+	}
+
+	if startRow < 0 {
+		startRow = 0
+	}
+	if endRow >= len(lines) {
+		endRow = len(lines) - 1
+	}
+
+	var sb strings.Builder
+	for i := startRow; i <= endRow; i++ {
+		line := lines[i]
+		runes := []rune(line)
+
+		sCol := 0
+		if i == startRow {
+			sCol = startCol
+		}
+
+		eCol := len(runes)
+		if i == endRow {
+			eCol = endCol
+		}
+
+		// Bounds check
+		if sCol < 0 {
+			sCol = 0
+		}
+		if sCol > len(runes) {
+			sCol = len(runes)
+		}
+		if eCol < 0 {
+			eCol = 0
+		}
+		if eCol > len(runes) {
+			eCol = len(runes)
+		}
+
+		if sCol < eCol {
+			sb.WriteString(string(runes[sCol:eCol]))
+		}
+
+		if i < endRow {
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String()
+}
+
+// Helper to get sorted, inclusive selection range for Vim-style visual mode
+func getSortedSelection(startRow, startCol, currRow, currCol int) (int, int, int, int) {
+	// 1. Sort start/end
+	sR, sC := startRow, startCol
+	eR, eC := currRow, currCol
+
+	if sR > eR || (sR == eR && sC > eC) {
+		sR, sC = currRow, currCol
+		eR, eC = startRow, startCol
+	}
+
+	// 2. Make end column exclusive for slice/range operations
+	eC++
+
+	return sR, sC, eR, eC
+}
+
 func (m *Model) updateItemEditor(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Toggle Vim Mode (Standard Vim Navigation)
+		if msg.String() == "ctrl+b" {
+			m.visualMode = !m.visualMode
+			m.visualSelectMode = false
+			m.itemEditor.ClearSelection()
+
+			if m.visualMode {
+				m.statusMsg = "-- VIM NAVIGATION --"
+			} else {
+				m.statusMsg = "-- INSERT MODE --"
+			}
+			return m, nil
+		}
+
+		// Handle Visual Mode navigation and commands
+		if m.visualMode {
+			var cmd tea.Cmd
+			switch msg.String() {
+			case "esc":
+				if m.visualSelectMode {
+					m.visualSelectMode = false
+					m.itemEditor.ClearSelection()
+					m.statusMsg = "-- VIM NAVIGATION --"
+					return m, nil
+				}
+				m.visualMode = false
+				m.statusMsg = "-- INSERT MODE --"
+				return m, nil
+			case "v":
+				m.visualSelectMode = !m.visualSelectMode
+				if m.visualSelectMode {
+					r, c := getCursorPos(m.itemEditor)
+
+					m.selectionStartRow, m.selectionStartCol = r, c
+					m.itemEditor.SetSelection(m.selectionStartRow, m.selectionStartCol, m.selectionStartRow, m.selectionStartCol+1)
+					m.statusMsg = "-- VISUAL --"
+				} else {
+					m.itemEditor.ClearSelection()
+					m.statusMsg = "-- VIM NAVIGATION --"
+				}
+				return m, nil
+
+			case "h", "left":
+				m.itemEditor, cmd = m.itemEditor.Update(tea.KeyMsg{Type: tea.KeyLeft})
+			case "l", "right":
+				m.itemEditor, cmd = m.itemEditor.Update(tea.KeyMsg{Type: tea.KeyRight})
+			case "k", "up":
+				m.itemEditor, cmd = m.itemEditor.Update(tea.KeyMsg{Type: tea.KeyUp})
+			case "j", "down":
+				m.itemEditor, cmd = m.itemEditor.Update(tea.KeyMsg{Type: tea.KeyDown})
+			case "y":
+				// Yank logic
+				currRow, currCol := getCursorPos(m.itemEditor)
+				sR, sC, eR, eC := getSortedSelection(m.selectionStartRow, m.selectionStartCol, currRow, currCol)
+				text := extractText(m.itemEditor.Value(), sR, sC, eR, eC)
+				clipboard.WriteAll(text)
+
+				m.visualMode = false
+				m.itemEditor.ClearSelection()
+				m.statusMsg = "Yanked: " + text
+				if len(m.statusMsg) > 50 {
+					m.statusMsg = m.statusMsg[:47] + "..."
+				}
+				return m, nil
+			case "p":
+				m.itemEditor, cmd = m.itemEditor.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+				m.visualMode = false
+				m.itemEditor.ClearSelection()
+				m.statusMsg = "Pasted"
+				return m, cmd
+			// Ignore other keys or let them pass? For safety, ignore typing.
+			case "d", "x":
+				m.statusMsg = "Cut/Delete not implemented in manual visual mode yet"
+				return m, nil
+			default:
+				return m, nil
+			}
+
+			// After move, update selection range
+			if m.visualSelectMode {
+				currRow, currCol := getCursorPos(m.itemEditor)
+				sR, sC, eR, eC := getSortedSelection(m.selectionStartRow, m.selectionStartCol, currRow, currCol)
+				m.itemEditor.SetSelection(sR, sC, eR, eC)
+			} else {
+				m.itemEditor.ClearSelection()
+			}
+			return m, cmd
+		}
+
+		// Normal Mode keys
 		switch msg.String() {
 		case "esc":
 			m.view = viewTableData
@@ -1858,6 +2033,14 @@ func (m Model) viewItemEditor() string {
 	b.WriteString(ui.HelpStyle.Render("Enter JSON for the item:"))
 	b.WriteString("\n\n")
 
+	// Render Visual Mode indicator
+	if m.visualMode {
+		b.WriteString(ui.SelectedStyle.Render(" -- VISUAL MODE -- "))
+		b.WriteString("\n")
+	} else {
+		b.WriteString("\n")
+	}
+
 	// Use style without borders for clean copy/paste with mouse
 	b.WriteString(ui.ContentNoBorderStyle.Width(m.width - 10).Render(m.itemEditor.View()))
 	b.WriteString("\n\n")
@@ -1869,8 +2052,18 @@ func (m Model) viewItemEditor() string {
 
 	help := ui.RenderHelp([]ui.KeyBinding{
 		{Key: "Ctrl+S", Desc: "Save"},
+		{Key: "Ctrl+B", Desc: "Visual Mode"},
 		{Key: "Esc", Desc: "Cancel"},
 	})
+	if m.visualMode {
+		help = ui.RenderHelp([]ui.KeyBinding{
+			{Key: "h/j/k/l", Desc: "Select"},
+			{Key: "y", Desc: "Copy"},
+			{Key: "p", Desc: "Paste"},
+			{Key: "x", Desc: "Cut"},
+			{Key: "Esc", Desc: "Exit Visual"},
+		})
+	}
 	b.WriteString(help)
 
 	return b.String()
