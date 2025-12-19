@@ -1839,7 +1839,7 @@ func (m Model) viewItemDetail() string {
 		{Key: "d", Desc: "Delete"},
 	})
 	b.WriteString("\n")
-	b.WriteString(lipgloss.Place(m.width, 0, lipgloss.Center, lipgloss.Bottom, help))
+	b.WriteString(lipgloss.Place(m.width, 0, lipgloss.Left, lipgloss.Bottom, help))
 
 	return b.String()
 }
