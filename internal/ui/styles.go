@@ -7,16 +7,16 @@ import (
 // Theme colors - Cyberpunk/Neon aesthetic
 var (
 	// Primary colors
-	ColorPrimary    = lipgloss.Color("#00FFFF") // Cyan
-	ColorSecondary  = lipgloss.Color("#FF00FF") // Magenta
-	ColorAccent     = lipgloss.Color("#FFFF00") // Yellow
-	ColorSuccess    = lipgloss.Color("#00FF00") // Green
-	ColorError      = lipgloss.Color("#FF0055") // Hot Pink
-	ColorWarning    = lipgloss.Color("#FF9900") // Orange
+	ColorPrimary   = lipgloss.Color("#00FFFF") // Cyan
+	ColorSecondary = lipgloss.Color("#FF00FF") // Magenta
+	ColorAccent    = lipgloss.Color("#FFFF00") // Yellow
+	ColorSuccess   = lipgloss.Color("#00FF00") // Green
+	ColorError     = lipgloss.Color("#FF0055") // Hot Pink
+	ColorWarning   = lipgloss.Color("#FF9900") // Orange
 
 	// Background colors
-	ColorBg        = lipgloss.Color("#0D0D1A") // Deep dark blue
-	ColorBgLight   = lipgloss.Color("#1A1A2E") // Slightly lighter
+	ColorBg          = lipgloss.Color("#0D0D1A") // Deep dark blue
+	ColorBgLight     = lipgloss.Color("#1A1A2E") // Slightly lighter
 	ColorBgHighlight = lipgloss.Color("#16213E") // Highlight bg
 
 	// Text colors
@@ -29,207 +29,218 @@ var (
 var (
 	// App container
 	AppStyle = lipgloss.NewStyle().
-		Background(ColorBg)
+			Background(ColorBg)
 
 	// Title bar
 	TitleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorPrimary).
-		Background(ColorBgLight).
-		Padding(0, 2).
-		MarginBottom(1)
+			Bold(true).
+			Foreground(ColorPrimary).
+			Background(ColorBgLight).
+			Padding(0, 2).
+			MarginBottom(1)
 
 	// Logo/Brand
 	LogoStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorSecondary).
-		Background(ColorBgLight).
-		Padding(1, 4).
-		Border(lipgloss.DoubleBorder()).
-		BorderForeground(ColorPrimary)
+			Bold(true).
+			Foreground(ColorSecondary).
+			Background(ColorBgLight).
+			Padding(1, 4).
+			Border(lipgloss.DoubleBorder()).
+			BorderForeground(ColorPrimary)
 
 	// Sidebar
 	SidebarStyle = lipgloss.NewStyle().
-		Width(30).
-		Padding(1, 2).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorPrimary).
-		Background(ColorBgLight)
+			Width(30).
+			Padding(1, 2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorPrimary).
+			Background(ColorBgLight)
 
 	// Main content area
 	ContentStyle = lipgloss.NewStyle().
-		Padding(1, 2).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorSecondary)
+			Padding(1, 2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorSecondary)
 
 	// Content area without borders (for clean copy/paste with mouse)
 	ContentNoBorderStyle = lipgloss.NewStyle().
-		Padding(1, 2)
+				Padding(1, 2)
 
 	// Selected item
 	SelectedStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorBg).
-		Background(ColorPrimary).
-		Padding(0, 1)
+			Bold(true).
+			Foreground(ColorBg).
+			Background(ColorPrimary).
+			Padding(0, 1)
 
 	// Normal list item
 	ItemStyle = lipgloss.NewStyle().
-		Foreground(ColorText).
-		Padding(0, 1)
+			Foreground(ColorText).
+			Padding(0, 1)
 
 	// Table header
 	TableHeaderStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorSecondary).
-		Background(ColorBgLight).
-		Padding(0, 1).
-		Border(lipgloss.NormalBorder(), false, false, true, false).
-		BorderForeground(ColorPrimary)
+				Bold(true).
+				Foreground(ColorSecondary).
+				Background(ColorBgLight).
+				Padding(0, 1).
+				Border(lipgloss.NormalBorder(), false, false, true, false).
+				BorderForeground(ColorPrimary)
 
 	// Table cell
 	TableCellStyle = lipgloss.NewStyle().
-		Foreground(ColorText).
-		Padding(0, 1)
+			Foreground(ColorText).
+			Padding(0, 1)
 
 	// Table cell selected
 	TableCellSelectedStyle = lipgloss.NewStyle().
-		Foreground(ColorBg).
-		Background(ColorPrimary).
-		Padding(0, 1)
+				Foreground(ColorBg).
+				Background(ColorPrimary).
+				Padding(0, 1)
 
 	// Status bar
 	StatusBarStyle = lipgloss.NewStyle().
-		Foreground(ColorText).
-		Background(ColorBgLight).
-		Padding(0, 2)
+			Foreground(ColorText).
+			Background(ColorBgLight).
+			Padding(0, 2)
 
 	// Help text
 	HelpStyle = lipgloss.NewStyle().
-		Foreground(ColorTextMuted).
-		Italic(true)
+			Foreground(ColorTextMuted).
+			Italic(true)
 
 	// Key binding
 	KeyStyle = lipgloss.NewStyle().
-		Foreground(ColorAccent).
-		Bold(true)
+			Foreground(ColorAccent).
+			Bold(true)
 
 	// Description
 	DescStyle = lipgloss.NewStyle().
-		Foreground(ColorTextMuted)
+			Foreground(ColorTextMuted)
 
 	// Error message
 	ErrorStyle = lipgloss.NewStyle().
-		Foreground(ColorError).
-		Bold(true).
-		Padding(0, 1)
+			Foreground(ColorError).
+			Bold(true).
+			Padding(0, 1)
 
 	// Success message
 	SuccessStyle = lipgloss.NewStyle().
-		Foreground(ColorSuccess).
-		Bold(true).
-		Padding(0, 1)
+			Foreground(ColorSuccess).
+			Bold(true).
+			Padding(0, 1)
 
 	// Warning message
 	WarningStyle = lipgloss.NewStyle().
-		Foreground(ColorWarning).
-		Bold(true).
-		Padding(0, 1)
+			Foreground(ColorWarning).
+			Bold(true).
+			Padding(0, 1)
 
 	// Info panel
 	InfoPanelStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorAccent).
-		Padding(1, 2).
-		MarginTop(1)
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorAccent).
+			Padding(1, 2).
+			MarginTop(1)
 
 	// Input field
 	InputStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorPrimary).
-		Padding(0, 1)
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorPrimary).
+			Padding(0, 1)
 
 	// Focused input
 	InputFocusedStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorSecondary).
-		Padding(0, 1)
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(ColorSecondary).
+				Padding(0, 1)
 
 	// Button
 	ButtonStyle = lipgloss.NewStyle().
-		Foreground(ColorText).
-		Background(ColorBgLight).
-		Padding(0, 2).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorTextMuted)
+			Foreground(ColorText).
+			Background(ColorBgLight).
+			Padding(0, 2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorTextMuted)
 
 	// Button focused
 	ButtonFocusedStyle = lipgloss.NewStyle().
-		Foreground(ColorBg).
-		Background(ColorPrimary).
-		Bold(true).
-		Padding(0, 2).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorPrimary)
+				Foreground(ColorBg).
+				Background(ColorPrimary).
+				Bold(true).
+				Padding(0, 2).
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(ColorPrimary)
 
 	// Badge/Tag
 	BadgeStyle = lipgloss.NewStyle().
-		Foreground(ColorBg).
-		Background(ColorSecondary).
-		Padding(0, 1).
-		Bold(true)
+			Foreground(ColorBg).
+			Background(ColorSecondary).
+			Padding(0, 1).
+			Bold(true)
 
 	// Type indicator
 	TypeStyle = lipgloss.NewStyle().
-		Foreground(ColorAccent).
-		Bold(true)
+			Foreground(ColorAccent).
+			Bold(true)
 
 	// Modal
 	ModalStyle = lipgloss.NewStyle().
-		Border(lipgloss.DoubleBorder()).
-		BorderForeground(ColorPrimary).
-		Background(ColorBgLight).
-		Padding(2, 4)
+			Border(lipgloss.DoubleBorder()).
+			BorderForeground(ColorPrimary).
+			Background(ColorBgLight).
+			Padding(2, 4)
 
 	// Divider
 	DividerStyle = lipgloss.NewStyle().
-		Foreground(ColorTextMuted)
+			Foreground(ColorTextMuted)
 
 	// Tab inactive
 	TabStyle = lipgloss.NewStyle().
-		Foreground(ColorTextMuted).
-		Padding(0, 2).
-		Border(lipgloss.RoundedBorder(), true, true, false, true).
-		BorderForeground(ColorTextMuted)
+			Foreground(ColorTextMuted).
+			Padding(0, 2).
+			Border(lipgloss.RoundedBorder(), true, true, false, true).
+			BorderForeground(ColorTextMuted)
 
 	// Tab active
 	TabActiveStyle = lipgloss.NewStyle().
-		Foreground(ColorPrimary).
-		Bold(true).
-		Padding(0, 2).
-		Border(lipgloss.RoundedBorder(), true, true, false, true).
-		BorderForeground(ColorPrimary)
+			Foreground(ColorPrimary).
+			Bold(true).
+			Padding(0, 2).
+			Border(lipgloss.RoundedBorder(), true, true, false, true).
+			BorderForeground(ColorPrimary)
 
 	// JSON Key
 	JSONKeyStyle = lipgloss.NewStyle().
-		Foreground(ColorSecondary)
+			Foreground(ColorSecondary)
 
 	// JSON String
 	JSONStringStyle = lipgloss.NewStyle().
-		Foreground(ColorSuccess)
+			Foreground(ColorSuccess)
 
 	// JSON Number
 	JSONNumberStyle = lipgloss.NewStyle().
-		Foreground(ColorAccent)
+			Foreground(ColorAccent)
 
 	// JSON Boolean
 	JSONBoolStyle = lipgloss.NewStyle().
-		Foreground(ColorPrimary)
+			Foreground(ColorPrimary)
 
 	// JSON Null
 	JSONNullStyle = lipgloss.NewStyle().
-		Foreground(ColorTextMuted).
-		Italic(true)
+			Foreground(ColorTextMuted).
+			Italic(true)
+
+	// Search Highlight
+	SearchHighlightStyle = lipgloss.NewStyle().
+				Background(ColorBgHighlight).
+				Foreground(ColorWarning)
+
+	// Active Search Highlight
+	SearchActiveHighlightStyle = lipgloss.NewStyle().
+					Background(ColorWarning).
+					Foreground(ColorBg).
+					Bold(true)
 )
 
 // RenderHelp renders a help line with key bindings
@@ -268,12 +279,3 @@ func PadRight(s string, width int) string {
 	}
 	return s + lipgloss.NewStyle().Width(width-len(s)).Render("")
 }
-
-
-
-
-
-
-
-
-

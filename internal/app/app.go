@@ -37,9 +37,9 @@ type (
 		itemsFound   int
 		totalScanned int64
 	}
-	itemSavedMsg    struct{}
-	itemDeletedMsg  struct{}
-	tableCreatedMsg struct{}
+	itemSavedMsg      struct{}
+	itemDeletedMsg    struct{}
+	tableCreatedMsg   struct{}
 	connectionTestMsg struct {
 		success bool
 		err     error
@@ -140,6 +140,10 @@ type Model struct {
 	// Create/Edit item
 	itemEditor textarea.Model
 
+	// Item Search
+	searchInput textinput.Model
+	searchMode  bool
+
 	// Create table form
 	createTableForm createTableForm
 
@@ -171,6 +175,7 @@ func New() Model {
 	m.initCreateTableForm()
 	m.initFilterBuilder()
 	m.initItemEditor()
+	m.initSearchInput()
 
 	m.tableList = ui.NewList("Tables", []string{})
 	m.tableList.Height = 30
@@ -707,9 +712,68 @@ func (m *Model) updateTableData(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) updateItemDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle search input
+	if m.searchMode {
+		switch msg.String() {
+		case "esc":
+			m.searchMode = false
+			m.searchInput.SetValue("")
+			m.jsonViewer.SearchQuery = ""
+			m.updateItemViewContent()
+			return m, nil
+		case "enter":
+			m.searchMode = false
+			return m, nil
+		case "ctrl+n", "n":
+			if m.jsonViewer.TotalMatches > 0 {
+				m.jsonViewer.CurrentMatch = (m.jsonViewer.CurrentMatch + 1) % m.jsonViewer.TotalMatches
+				m.updateItemViewContent()
+			}
+			return m, nil
+		case "ctrl+p", "N":
+			if m.jsonViewer.TotalMatches > 0 {
+				m.jsonViewer.CurrentMatch--
+				if m.jsonViewer.CurrentMatch < 0 {
+					m.jsonViewer.CurrentMatch = m.jsonViewer.TotalMatches - 1
+				}
+				m.updateItemViewContent()
+			}
+			return m, nil
+		}
+
+		var cmd tea.Cmd
+		m.searchInput, cmd = m.searchInput.Update(msg)
+
+		// Update search query
+		m.jsonViewer.SearchQuery = m.searchInput.Value()
+		// Reset current match when query changes
+		m.jsonViewer.CurrentMatch = 0
+		m.updateItemViewContent()
+
+		return m, cmd
+	}
+
 	switch msg.String() {
 	case "q", "esc":
 		m.view = viewTableData
+	case "/":
+		m.searchMode = true
+		m.searchInput.Focus()
+		m.updateItemViewContent()
+		return m, textinput.Blink
+	case "n":
+		if m.jsonViewer.TotalMatches > 0 {
+			m.jsonViewer.CurrentMatch = (m.jsonViewer.CurrentMatch + 1) % m.jsonViewer.TotalMatches
+			m.updateItemViewContent()
+		}
+	case "N":
+		if m.jsonViewer.TotalMatches > 0 {
+			m.jsonViewer.CurrentMatch--
+			if m.jsonViewer.CurrentMatch < 0 {
+				m.jsonViewer.CurrentMatch = m.jsonViewer.TotalMatches - 1
+			}
+			m.updateItemViewContent()
+		}
 	case "e":
 		jsonStr, _ := models.ItemToJSON(m.selectedItem, true)
 		m.itemEditor.SetValue(jsonStr)
@@ -737,6 +801,14 @@ func (m *Model) updateItemDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.itemViewport.HalfViewDown()
 	}
 	return m, nil
+}
+
+func (m *Model) updateItemViewContent() {
+	if m.jsonViewer == nil {
+		return
+	}
+	content := m.jsonViewer.Render()
+	m.itemViewport.SetContent(content)
 }
 
 func (m *Model) updateItemEditor(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1702,22 +1774,46 @@ func (m Model) viewTableData() string {
 func (m Model) viewItemDetail() string {
 	var b strings.Builder
 
-	header := ui.TitleStyle.Render("Item Details")
+	// Header
+	header := ui.TitleStyle.Render("⚡ Item Details")
 	b.WriteString(header)
 	b.WriteString("\n\n")
 
-	// Use style without borders for clean copy/paste with mouse
-	b.WriteString(ui.ContentNoBorderStyle.Width(m.width - 10).Render(m.itemViewport.View()))
-	b.WriteString("\n\n")
+	// Helper info or Search UI
+	if m.searchMode {
+		b.WriteString(ui.InputFocusedStyle.Render(m.searchInput.View()))
 
+		// Match status
+		if m.jsonViewer.TotalMatches > 0 {
+			matchStatus := fmt.Sprintf(" %d/%d matches ", m.jsonViewer.CurrentMatch+1, m.jsonViewer.TotalMatches)
+			b.WriteString(ui.HelpStyle.Render(matchStatus))
+		} else if m.searchInput.Value() != "" {
+			b.WriteString(ui.HelpStyle.Render(" No matches "))
+		}
+	} else {
+		// Just help text
+		b.WriteString(ui.HelpStyle.Render("Press / to search • n/N to next/prev • e to edit • d to delete"))
+	}
+	b.WriteString("\n")
+
+	// Content
+	b.WriteString(lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ui.ColorSecondary).
+		Padding(1, 2).
+		Width(m.width - 6).
+		Height(m.height - 10).
+		Render(m.itemViewport.View()))
+
+	// Footer Help
 	help := ui.RenderHelp([]ui.KeyBinding{
-		{Key: "↑/↓", Desc: "Scroll"},
+		{Key: "q/Esc", Desc: "Back"},
 		{Key: "y", Desc: "Copy JSON"},
 		{Key: "e", Desc: "Edit"},
 		{Key: "d", Desc: "Delete"},
-		{Key: "q/Esc", Desc: "Back"},
 	})
-	b.WriteString(help)
+	b.WriteString("\n")
+	b.WriteString(lipgloss.Place(m.width, 0, lipgloss.Center, lipgloss.Bottom, help))
 
 	return b.String()
 }
