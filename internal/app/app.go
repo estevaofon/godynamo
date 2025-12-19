@@ -752,14 +752,14 @@ func (m *Model) updateItemDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.searchMode = false
 			m.scrollToCurrentMatch()
 			return m, nil
-		case "ctrl+n", "n":
+		case "ctrl+n":
 			if m.jsonViewer.TotalMatches > 0 {
 				m.jsonViewer.CurrentMatch = (m.jsonViewer.CurrentMatch + 1) % m.jsonViewer.TotalMatches
 				m.updateItemViewContent()
 				m.scrollToCurrentMatch()
 			}
 			return m, nil
-		case "ctrl+p", "N":
+		case "ctrl+p":
 			if m.jsonViewer.TotalMatches > 0 {
 				m.jsonViewer.CurrentMatch--
 				if m.jsonViewer.CurrentMatch < 0 {
