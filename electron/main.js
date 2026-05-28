@@ -26,6 +26,15 @@ ipcMain.handle('bridge-info', () => ({
 }))
 
 app.whenReady().then(() => {
+  if (!PORT || !TOKEN) {
+    const { dialog } = require('electron')
+    dialog.showErrorBox(
+      'GoDynamo',
+      'Missing GODYNAMO_BRIDGE_PORT / GODYNAMO_BRIDGE_TOKEN.\nLaunch the GUI via: go run . gui'
+    )
+    app.quit()
+    return
+  }
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

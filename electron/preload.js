@@ -19,7 +19,7 @@ async function call(method, pathName, body) {
   try {
     data = text ? JSON.parse(text) : {}
   } catch {
-    data = {}
+    data = { error: text }
   }
   if (!res.ok) {
     throw new Error(data.error || `request failed (${res.status})`)
