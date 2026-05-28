@@ -14,6 +14,7 @@ import (
 
 // Run starts the loopback HTTP bridge and launches the Electron desktop app.
 // It blocks until the Electron window is closed or the process is interrupted.
+// args is reserved for future flag parsing (e.g., --port); it is currently unused.
 func Run(args []string) error {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -58,6 +59,7 @@ func Run(args []string) error {
 	select {
 	case <-sigCh:
 		_ = electron.Process.Kill()
+		<-done // Wait() returns promptly after Kill
 	case <-done:
 	}
 	return nil

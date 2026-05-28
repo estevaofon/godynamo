@@ -18,8 +18,11 @@ func startElectron(port int, token string) (*exec.Cmd, error) {
 	}
 	bin := electronBinPath(dir)
 	if _, statErr := os.Stat(bin); statErr != nil {
-		return nil, fmt.Errorf(
-			"Electron is not set up. Run:\n  cd %s\n  npm install\nthen re-run `godynamo gui`", dir)
+		if os.IsNotExist(statErr) {
+			return nil, fmt.Errorf(
+				"Electron is not set up. Run:\n  cd %s\n  npm install\nthen re-run `godynamo gui`", dir)
+		}
+		return nil, fmt.Errorf("checking Electron binary: %w", statErr)
 	}
 
 	cmd := exec.Command(bin, ".")
