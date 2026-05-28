@@ -79,6 +79,8 @@ async function selectTable(name) {
   state.items = []
   $('current-table').textContent = name
   $('status').textContent = 'Loading…'
+  $('schema-btn').disabled = true
+  $('more-btn').disabled = true
   renderTableList()
   try {
     const schema = await window.api.schema(name)
@@ -105,6 +107,7 @@ async function loadPage(reset) {
     renderGrid()
   } catch (err) {
     $('status').textContent = 'Error: ' + err.message
+    $('more-btn').disabled = !state.cursor
   }
 }
 
