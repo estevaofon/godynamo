@@ -19,6 +19,7 @@ import (
 
 	"github.com/godynamo/internal/dynamo"
 	"github.com/godynamo/internal/models"
+	"github.com/godynamo/internal/query"
 	"github.com/godynamo/internal/ui"
 	"github.com/godynamo/internal/ui/textarea"
 )
@@ -1237,144 +1238,34 @@ func (m *Model) describeTable() tea.Cmd {
 
 func (m *Model) scanTable() tea.Cmd {
 	return func() tea.Msg {
-		// Check if we're filtering by partition key or GSI partition key with equals operator - use Query instead
-		// DynamoDB only allows = operator for KeyConditionExpression on partition key
-		if m.tableInfo != nil && m.filterExpr != "" && m.filterValues != nil {
-			// Get the first filter attribute name
-			if attrName, ok := m.filterNames["#attr0"]; ok {
-				// Check if the first condition uses the equals operator (not <>, contains, etc.)
-				// The expression would look like "#attr0 = :val0" for equals
-				firstConditionIsEquals := strings.Contains(m.filterExpr, "#attr0 = :") ||
-					(strings.Contains(m.filterExpr, "#attr0 =") && !strings.Contains(m.filterExpr, "#attr0 <>"))
+		plan := query.BuildPlan(m.tableInfo, m.filterExpr, m.filterNames, m.filterValues)
 
-				// Only use Query if the first condition is an equals comparison
-				if firstConditionIsEquals {
-					// Find the placeholder for the first attribute
-					var firstPlaceholder string
-					for p := range m.filterValues {
-						if strings.HasPrefix(p, ":val0") {
-							firstPlaceholder = p
-							break
-						}
-					}
-					if firstPlaceholder == "" {
-						// Fallback to first placeholder found
-						for p := range m.filterValues {
-							firstPlaceholder = p
-							break
-						}
-					}
-					value := m.filterValues[firstPlaceholder]
-
-					// Build additional filter expression for other conditions
-					var additionalFilterExpr string
-					additionalNames := make(map[string]string)
-					additionalValues := make(map[string]interface{})
-
-					// Check if there are multiple conditions
-					if strings.Contains(m.filterExpr, " AND ") {
-						// Split and get conditions after the first one
-						parts := strings.SplitN(m.filterExpr, " AND ", 2)
-						if len(parts) > 1 {
-							additionalFilterExpr = parts[1]
-							// Copy all names and values except the first ones
-							for k, v := range m.filterNames {
-								if k != "#attr0" {
-									additionalNames[k] = v
-								}
-							}
-							for k, v := range m.filterValues {
-								if k != firstPlaceholder {
-									additionalValues[k] = v
-								}
-							}
-						}
-					}
-
-					// Check if it's the table's partition key
-					if attrName == m.tableInfo.PartitionKey {
-						keyCondition := fmt.Sprintf("#pk = %s", firstPlaceholder)
-
-						queryInput := dynamo.QueryInput{
-							TableName:              m.currentTable,
-							KeyConditionExpression: keyCondition,
-							ExpressionAttributeNames: map[string]string{
-								"#pk": m.tableInfo.PartitionKey,
-							},
-							ExpressionValues: map[string]interface{}{
-								firstPlaceholder: value,
-							},
-							Limit:            m.pageSize,
-							ScanIndexForward: true,
-						}
-
-						// Add additional filter if present
-						if additionalFilterExpr != "" {
-							queryInput.FilterExpression = additionalFilterExpr
-							for k, v := range additionalNames {
-								queryInput.ExpressionAttributeNames[k] = v
-							}
-							for k, v := range additionalValues {
-								queryInput.ExpressionValues[k] = v
-							}
-						}
-
-						result, err := m.client.QueryTable(context.Background(), queryInput)
-						if err != nil {
-							return errMsg{err}
-						}
-						return queryResultMsg{result}
-					}
-
-					// Check if it's a GSI partition key
-					for _, gsi := range m.tableInfo.GSIs {
-						if gsi.PartitionKey == attrName {
-							keyCondition := fmt.Sprintf("#pk = %s", firstPlaceholder)
-
-							queryInput := dynamo.QueryInput{
-								TableName:              m.currentTable,
-								IndexName:              gsi.Name,
-								KeyConditionExpression: keyCondition,
-								ExpressionAttributeNames: map[string]string{
-									"#pk": attrName,
-								},
-								ExpressionValues: map[string]interface{}{
-									firstPlaceholder: value,
-								},
-								Limit:            m.pageSize,
-								ScanIndexForward: true,
-							}
-
-							// Add additional filter if present
-							if additionalFilterExpr != "" {
-								queryInput.FilterExpression = additionalFilterExpr
-								for k, v := range additionalNames {
-									queryInput.ExpressionAttributeNames[k] = v
-								}
-								for k, v := range additionalValues {
-									queryInput.ExpressionValues[k] = v
-								}
-							}
-
-							result, err := m.client.QueryTable(context.Background(), queryInput)
-							if err != nil {
-								return errMsg{err}
-							}
-							return queryResultMsg{result}
-						}
-					}
-				}
+		// Query mode: filter's first condition is an equals on the PK / GSI PK.
+		if plan.Mode == query.ModeQuery {
+			queryInput := dynamo.QueryInput{
+				TableName:                m.currentTable,
+				IndexName:                plan.IndexName,
+				KeyConditionExpression:   plan.KeyConditionExpression,
+				FilterExpression:         plan.FilterExpression,
+				ExpressionAttributeNames: plan.Names,
+				ExpressionValues:         plan.Values,
+				Limit:                    m.pageSize,
+				ScanIndexForward:         true,
 			}
+			result, err := m.client.QueryTable(context.Background(), queryInput)
+			if err != nil {
+				return errMsg{err}
+			}
+			return queryResultMsg{result}
 		}
 
-		// If there's a filter, use continuous scan with 3-minute timeout
+		// Scan mode with a filter: continuous scan with a 3-minute timeout.
 		if m.filterExpr != "" {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-			// Store cancel function for potential cancellation
 			m.scanCancel = cancel
 
 			result, err := m.client.ScanTableContinuous(ctx, m.currentTable, int(m.pageSize), nil, m.filterExpr, m.filterNames, m.filterValues)
-			cancel() // Clean up context
+			cancel()
 
 			if err != nil {
 				return errMsg{err}
@@ -1382,7 +1273,7 @@ func (m *Model) scanTable() tea.Cmd {
 			return continuousScanMsg{result: result, totalScanned: result.TotalScanned}
 		}
 
-		// No filter - use simple scan
+		// No filter: simple scan.
 		result, err := m.client.ScanTable(context.Background(), m.currentTable, m.pageSize, nil, m.filterExpr, m.filterNames, m.filterValues)
 		if err != nil {
 			return errMsg{err}
