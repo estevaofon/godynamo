@@ -28,10 +28,13 @@ type server struct {
 	mu        sync.RWMutex
 	backend   Backend // nil until /connect succeeds
 	connectFn func(req connectRequest) (Backend, error)
+	h         http.Handler
 }
 
 func newServer(token string) *server {
-	return &server{token: token, connectFn: defaultConnect}
+	s := &server{token: token, connectFn: defaultConnect}
+	s.h = s.buildHandler()
+	return s
 }
 
 // defaultConnect builds a real *dynamo.Client from the request.
@@ -51,7 +54,9 @@ func defaultConnect(req connectRequest) (Backend, error) {
 	return dynamo.NewClient(cfg)
 }
 
-func (s *server) handler() http.Handler {
+func (s *server) handler() http.Handler { return s.h }
+
+func (s *server) buildHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /connect", s.handleConnect)
 	mux.HandleFunc("GET /tables", s.handleListTables)
@@ -92,6 +97,12 @@ func (s *server) getBackend() (Backend, bool) {
 	return s.backend, s.backend != nil
 }
 
+func (s *server) setBackend(b Backend) {
+	s.mu.Lock()
+	s.backend = b
+	s.mu.Unlock()
+}
+
 func (s *server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	var req connectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -124,11 +135,10 @@ func (s *server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "connected but failed to list tables: "+err.Error())
 		return
 	}
+	tables = append([]string(nil), tables...)
 	sort.Strings(tables)
 
-	s.mu.Lock()
-	s.backend = backend
-	s.mu.Unlock()
+	s.setBackend(backend)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"tables": tables})
 }
@@ -144,6 +154,7 @@ func (s *server) handleListTables(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	tables = append([]string(nil), tables...)
 	sort.Strings(tables)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"tables": tables})
 }

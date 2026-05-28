@@ -16,3 +16,6 @@ type Backend interface {
 		startKey map[string]types.AttributeValue,
 		filterExpr string, names map[string]string, values map[string]interface{}) (*dynamo.ScanResult, error)
 }
+
+// Compile-time check that the production client satisfies Backend.
+var _ Backend = (*dynamo.Client)(nil)

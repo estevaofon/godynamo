@@ -3,6 +3,7 @@ package gui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,7 +34,7 @@ func (f *fakeBackend) ScanTable(ctx context.Context, name string, limit int32,
 
 func newTestServer(b Backend) *server {
 	s := newServer("test-token")
-	s.backend = b
+	s.setBackend(b)
 	return s
 }
 
@@ -186,5 +187,13 @@ func TestScanNotConnected(t *testing.T) {
 	rec := do(s, http.MethodGet, "/tables/x/scan", "")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("want 409, got %d", rec.Code)
+	}
+}
+
+func TestScanBackendError(t *testing.T) {
+	s := newTestServer(&fakeBackend{scanErr: errors.New("dynamo timeout")})
+	rec := do(s, http.MethodGet, "/tables/x/scan", "")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("want 502, got %d", rec.Code)
 	}
 }
