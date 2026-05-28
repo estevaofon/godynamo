@@ -1,0 +1,13 @@
+{
+  "name": "godynamo-gui",
+  "version": "0.1.0",
+  "description": "GoDynamo desktop GUI (Electron front-end)",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}
