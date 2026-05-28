@@ -30,7 +30,7 @@ func encodeCursor(key map[string]types.AttributeValue) (string, error) {
 	}
 	raw, err := json.Marshal(wire)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to marshal cursor: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(raw), nil
 }

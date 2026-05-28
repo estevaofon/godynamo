@@ -1,6 +1,8 @@
 package gui
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -52,5 +54,20 @@ func TestEmptyCursor(t *testing.T) {
 func TestDecodeInvalidCursor(t *testing.T) {
 	if _, err := decodeCursor("!!!not-base64!!!"); err == nil {
 		t.Fatal("expected error for invalid cursor")
+	}
+}
+
+func TestDecodeCorruptedJSON(t *testing.T) {
+	tok := base64.StdEncoding.EncodeToString([]byte("not-json"))
+	if _, err := decodeCursor(tok); err == nil {
+		t.Fatal("expected error for non-JSON payload")
+	}
+}
+
+func TestDecodeUnknownTypeTag(t *testing.T) {
+	raw, _ := json.Marshal(map[string]map[string]string{"pk": {"X": "val"}})
+	tok := base64.StdEncoding.EncodeToString(raw)
+	if _, err := decodeCursor(tok); err == nil {
+		t.Fatal("expected error for unknown type tag")
 	}
 }
