@@ -102,12 +102,12 @@ Connection creation stays with `dynamo.NewClient(...)`. The server holds the act
 | `POST /connect` | `{ "mode":"aws"\|"local", "region":"us-east-1", "endpoint":"http://localhost:8000" }` | `{ "tables":[...] }` |
 | `GET /tables` | — | `{ "tables":[...] }` (sorted) |
 | `GET /tables/{name}/schema` | — | `{ "info": <TableInfo>, "rawJSON": "..." }` |
-| `GET /tables/{name}/scan?limit=500&cursor=<opaque>` | — | `{ "items":[ {plain JSON}... ], "keys": {"partition":"id","sort":"sk"}, "cursor":"<opaque or empty>", "count":N }` |
+| `GET /tables/{name}/scan?limit=500&cursor=<opaque>` | — | `{ "items":[ {plain JSON}... ], "cursor":"<opaque or empty>", "count":N }` |
 
 Notes:
 - `/connect` validates by building the client and doing a quick `ListTables`. `mode:"local"` calls `dynamo.NewClient` with `UseLocal:true` and the given `endpoint`; `mode:"aws"` uses the chosen region with the default credential chain. (Connection errors → `400`/`502` with a message.)
 - Items are converted to plain JSON via `models.AttributeValueToInterface` per attribute.
-- `keys` carries the partition/sort key names from `DescribeTable` so the renderer can order columns PK/SK-first, mirroring the TUI's `itemsToTable`.
+- The renderer orders columns PK/SK-first using the key names from the `/schema` response (fetched once per table), not per scan page — mirroring the TUI's `itemsToTable`.
 - **Item detail needs no endpoint** — the scan payload already includes full items; the renderer renders the selected item client-side.
 
 ### 5.3 Pagination cursor codec

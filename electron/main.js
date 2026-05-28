@@ -19,12 +19,6 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'))
 }
 
-// The renderer never sees the token directly; the preload fetches it once via IPC.
-ipcMain.handle('bridge-info', () => ({
-  baseUrl: `http://127.0.0.1:${PORT}`,
-  token: TOKEN,
-}))
-
 app.whenReady().then(() => {
   if (!PORT || !TOKEN) {
     const { dialog } = require('electron')
@@ -35,6 +29,11 @@ app.whenReady().then(() => {
     app.quit()
     return
   }
+  // The renderer never sees the token directly; the preload fetches it once via IPC.
+  ipcMain.handle('bridge-info', () => ({
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    token: TOKEN,
+  }))
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
