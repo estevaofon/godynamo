@@ -102,6 +102,39 @@ aws configure
 
 ---
 
+## 🖥️ Desktop GUI (experimental, Windows-first)
+
+GoDynamo ships an optional Electron desktop UI for **read-only** browsing
+(connect → list tables → scan/browse → inspect item JSON → view schema).
+The terminal UI remains the default; the GUI is launched with the `gui` subcommand.
+
+### One-time setup (requires Node.js + npm)
+
+```bash
+cd electron
+npm install
+cd ..
+```
+
+### Launch
+
+```bash
+go run . gui
+# or, after building:
+go build -o godynamo.exe .
+./godynamo.exe gui
+```
+
+On launch you choose **AWS** (pick a region; uses your default credentials) or
+**DynamoDB Local** (default endpoint `http://localhost:8000`). The Go process starts
+a loopback-only HTTP bridge (127.0.0.1, random port, one-time token) and opens the
+Electron window; closing the window shuts everything down.
+
+> Status: read-only v1. CRUD, the visual filter builder, export, and packaged
+> installers are planned for later phases.
+
+---
+
 ## 🎯 Filter Builder
 
 GoDynamo features a visual filter builder - no need to remember DynamoDB expression syntax!
