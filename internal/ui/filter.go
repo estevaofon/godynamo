@@ -2,12 +2,13 @@ package ui
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/godynamo/internal/query"
 )
 
 // FilterOperator represents a filter comparison operator
@@ -249,155 +250,19 @@ func (f *FilterBuilder) Update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-// parseValue tries to parse a string value into the appropriate type
-// Returns the parsed value (float64, bool, or string)
-func parseValue(value string) interface{} {
-	// Try to parse as number
-	if f, err := strconv.ParseFloat(value, 64); err == nil {
-		return f
-	}
-
-	// Try to parse as boolean
-	if strings.ToLower(value) == "true" {
-		return true
-	}
-	if strings.ToLower(value) == "false" {
-		return false
-	}
-
-	// Try to parse as null
-	if strings.ToLower(value) == "null" {
-		return nil
-	}
-
-	// Return as string
-	return value
-}
-
-// BuildExpression builds a DynamoDB filter expression
+// BuildExpression builds a DynamoDB filter expression by delegating to the
+// shared query package (single source of truth with the GUI bridge).
 func (f *FilterBuilder) BuildExpression() (string, map[string]string, map[string]interface{}) {
-	var expressions []string
-	attrNames := make(map[string]string)
-	attrValues := make(map[string]interface{})
-
-	valueCounter := 0
-
-	for _, cond := range f.Conditions {
-		name := strings.TrimSpace(cond.AttributeName.Value())
-		value := strings.TrimSpace(cond.AttributeValue.Value())
-
-		if name == "" {
-			continue
-		}
-
-		// Create attribute name placeholder
-		namePlaceholder := fmt.Sprintf("#attr%d", len(attrNames))
-		attrNames[namePlaceholder] = name
-
-		var expr string
-
-		switch cond.Operator {
-		case OpEquals:
-			if value == "" {
-				continue
-			}
-			valuePlaceholder := fmt.Sprintf(":val%d", valueCounter)
-			attrValues[valuePlaceholder] = parseValue(value)
-			expr = fmt.Sprintf("%s = %s", namePlaceholder, valuePlaceholder)
-			valueCounter++
-
-		case OpNotEquals:
-			if value == "" {
-				continue
-			}
-			valuePlaceholder := fmt.Sprintf(":val%d", valueCounter)
-			attrValues[valuePlaceholder] = parseValue(value)
-			expr = fmt.Sprintf("%s <> %s", namePlaceholder, valuePlaceholder)
-			valueCounter++
-
-		case OpGreaterThan:
-			if value == "" {
-				continue
-			}
-			valuePlaceholder := fmt.Sprintf(":val%d", valueCounter)
-			attrValues[valuePlaceholder] = parseValue(value)
-			expr = fmt.Sprintf("%s > %s", namePlaceholder, valuePlaceholder)
-			valueCounter++
-
-		case OpLessThan:
-			if value == "" {
-				continue
-			}
-			valuePlaceholder := fmt.Sprintf(":val%d", valueCounter)
-			attrValues[valuePlaceholder] = parseValue(value)
-			expr = fmt.Sprintf("%s < %s", namePlaceholder, valuePlaceholder)
-			valueCounter++
-
-		case OpGreaterOrEqual:
-			if value == "" {
-				continue
-			}
-			valuePlaceholder := fmt.Sprintf(":val%d", valueCounter)
-			attrValues[valuePlaceholder] = parseValue(value)
-			expr = fmt.Sprintf("%s >= %s", namePlaceholder, valuePlaceholder)
-			valueCounter++
-
-		case OpLessOrEqual:
-			if value == "" {
-				continue
-			}
-			valuePlaceholder := fmt.Sprintf(":val%d", valueCounter)
-			attrValues[valuePlaceholder] = parseValue(value)
-			expr = fmt.Sprintf("%s <= %s", namePlaceholder, valuePlaceholder)
-			valueCounter++
-
-		case OpContains:
-			if value == "" {
-				continue
-			}
-			valuePlaceholder := fmt.Sprintf(":val%d", valueCounter)
-			// Contains always uses string
-			attrValues[valuePlaceholder] = value
-			expr = fmt.Sprintf("contains(%s, %s)", namePlaceholder, valuePlaceholder)
-			valueCounter++
-
-		case OpNotContains:
-			if value == "" {
-				continue
-			}
-			valuePlaceholder := fmt.Sprintf(":val%d", valueCounter)
-			// Not contains always uses string
-			attrValues[valuePlaceholder] = value
-			expr = fmt.Sprintf("NOT contains(%s, %s)", namePlaceholder, valuePlaceholder)
-			valueCounter++
-
-		case OpBeginsWith:
-			if value == "" {
-				continue
-			}
-			valuePlaceholder := fmt.Sprintf(":val%d", valueCounter)
-			// Begins with always uses string
-			attrValues[valuePlaceholder] = value
-			expr = fmt.Sprintf("begins_with(%s, %s)", namePlaceholder, valuePlaceholder)
-			valueCounter++
-
-		case OpExists:
-			expr = fmt.Sprintf("attribute_exists(%s)", namePlaceholder)
-
-		case OpNotExists:
-			expr = fmt.Sprintf("attribute_not_exists(%s)", namePlaceholder)
-		}
-
-		if expr != "" {
-			expressions = append(expressions, expr)
+	conds := make([]query.Condition, len(f.Conditions))
+	for i, c := range f.Conditions {
+		conds[i] = query.Condition{
+			Name: c.AttributeName.Value(),
+			// ui.FilterOperator and query.Operator share the same iota order.
+			Operator: query.Operator(c.Operator),
+			Value:    c.AttributeValue.Value(),
 		}
 	}
-
-	if len(expressions) == 0 {
-		return "", nil, nil
-	}
-
-	return strings.Join(expressions, " AND "), attrNames, attrValues
+	return query.BuildExpression(conds)
 }
 
 // View renders the filter builder
