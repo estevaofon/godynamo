@@ -1,0 +1,41 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #0b0f1a; color: #c8d3f5; height: 100vh; }
+.hidden { display: none !important; }
+.screen { height: 100vh; }
+
+#connect-screen { display: flex; align-items: center; justify-content: center; }
+.connect-card { background: #131a2b; padding: 32px; border-radius: 12px; border: 1px solid #2a3450; width: 360px; }
+.connect-card h1 { margin-top: 0; color: #7aa2f7; }
+.field { margin: 16px 0; display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: 14px; }
+select, input[type="text"], button {
+  background: #0b0f1a; color: #c8d3f5; border: 1px solid #2a3450; border-radius: 6px; padding: 8px; font-size: 14px;
+}
+button { cursor: pointer; background: #2a3450; }
+button:hover:not(:disabled) { background: #3a4670; }
+button:disabled { opacity: 0.5; cursor: default; }
+.error { color: #f7768e; min-height: 18px; }
+
+#main-screen { display: flex; }
+#sidebar { width: 260px; border-right: 1px solid #2a3450; padding: 12px; overflow-y: auto; }
+#sidebar input { width: 100%; margin-bottom: 8px; }
+#table-list { list-style: none; margin: 0; padding: 0; }
+#table-list li { padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+#table-list li:hover { background: #1b2336; }
+#table-list li.active { background: #2a3450; color: #7aa2f7; }
+#content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#toolbar { display: flex; align-items: center; gap: 12px; padding: 12px; border-bottom: 1px solid #2a3450; }
+#current-table { font-weight: bold; color: #7aa2f7; }
+#status { margin-left: auto; font-size: 12px; color: #828bb8; }
+#grid-wrap { flex: 1; overflow: auto; }
+table#grid { border-collapse: collapse; width: 100%; font-size: 12px; }
+#grid th, #grid td { border: 1px solid #2a3450; padding: 4px 8px; text-align: left; white-space: nowrap; }
+#grid th { position: sticky; top: 0; background: #131a2b; }
+#grid tbody tr:hover { background: #1b2336; cursor: pointer; }
+
+#detail { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; }
+.detail-card { background: #131a2b; border: 1px solid #2a3450; border-radius: 8px; width: 70%; max-height: 80%; display: flex; flex-direction: column; }
+.detail-card header { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #2a3450; }
+.detail-card header span { font-weight: bold; }
+.detail-card header button { margin-left: auto; }
+#detail-body { overflow: auto; padding: 16px; margin: 0; font-family: 'Cascadia Code', monospace; font-size: 12px; }

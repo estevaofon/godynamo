@@ -2,14 +2,60 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; connect-src http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline';" />
   <title>GoDynamo</title>
+  <link rel="stylesheet" href="styles.css" />
 </head>
-<body style="background:#0b0f1a;color:#c8d3f5;font-family:sans-serif;padding:24px;">
-  <h1>⚡ GoDynamo — bridge handshake</h1>
-  <p id="status">Checking window.api…</p>
-  <script>
-    document.getElementById('status').textContent =
-      window.api ? 'window.api is available ✓ (ready for the real UI)' : 'window.api MISSING ✗'
-  </script>
+<body>
+  <section id="connect-screen" class="screen">
+    <div class="connect-card">
+      <h1>⚡ GoDynamo</h1>
+      <div class="field">
+        <label><input type="radio" name="mode" value="aws" checked /> AWS</label>
+        <label><input type="radio" name="mode" value="local" /> DynamoDB Local</label>
+      </div>
+      <div class="field" id="aws-fields">
+        <label for="region">Region</label>
+        <select id="region"></select>
+      </div>
+      <div class="field hidden" id="local-fields">
+        <label for="endpoint">Endpoint</label>
+        <input type="text" id="endpoint" value="http://localhost:8000" />
+      </div>
+      <button id="connect-btn">Connect</button>
+      <p id="connect-error" class="error"></p>
+    </div>
+  </section>
+
+  <section id="main-screen" class="screen hidden">
+    <aside id="sidebar">
+      <input type="text" id="table-filter" placeholder="Filter tables…" />
+      <ul id="table-list"></ul>
+    </aside>
+    <main id="content">
+      <header id="toolbar">
+        <span id="current-table"></span>
+        <button id="schema-btn" disabled>Schema</button>
+        <button id="more-btn" disabled>Load more</button>
+        <span id="status"></span>
+      </header>
+      <div id="grid-wrap">
+        <table id="grid"><thead></thead><tbody></tbody></table>
+      </div>
+    </main>
+  </section>
+
+  <div id="detail" class="hidden">
+    <div class="detail-card">
+      <header>
+        <span id="detail-title"></span>
+        <button id="detail-close">✕</button>
+      </header>
+      <pre id="detail-body"></pre>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
 </body>
 </html>
