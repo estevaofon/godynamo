@@ -1,3 +1,5 @@
+// Package query provides UI-agnostic DynamoDB filter-expression building and
+// Query-vs-Scan planning, shared by the terminal TUI and the GUI bridge.
 package query
 
 import (
@@ -67,7 +69,6 @@ func BuildExpression(conds []Condition) (string, map[string]string, map[string]i
 		}
 
 		namePlaceholder := fmt.Sprintf("#attr%d", len(attrNames))
-		attrNames[namePlaceholder] = name
 
 		var expr string
 
@@ -151,6 +152,7 @@ func BuildExpression(conds []Condition) (string, map[string]string, map[string]i
 		}
 
 		if expr != "" {
+			attrNames[namePlaceholder] = name
 			expressions = append(expressions, expr)
 		}
 	}

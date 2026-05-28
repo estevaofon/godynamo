@@ -84,3 +84,26 @@ func TestBuildExpressionExistsNoValuePlaceholder(t *testing.T) {
 		t.Fatalf("expected no values, got %v", values)
 	}
 }
+
+func TestBuildExpressionNamedEmptyValueNoGhost(t *testing.T) {
+	expr, names, values := BuildExpression([]Condition{{Name: "x", Operator: OpEquals, Value: ""}})
+	if expr != "" || names != nil || values != nil {
+		t.Fatalf("named+empty-value should yield empty result, got %q %v %v", expr, names, values)
+	}
+}
+
+func TestBuildExpressionGhostBeforeValidIsClean(t *testing.T) {
+	expr, names, values := BuildExpression([]Condition{
+		{Name: "a", Operator: OpEquals, Value: ""},
+		{Name: "b", Operator: OpEquals, Value: "2"},
+	})
+	if expr != "#attr0 = :val0" {
+		t.Fatalf("expr=%q", expr)
+	}
+	if len(names) != 1 || names["#attr0"] != "b" {
+		t.Fatalf("names should only contain the valid condition, got %v", names)
+	}
+	if values[":val0"] != float64(2) {
+		t.Fatalf("values=%v", values)
+	}
+}
