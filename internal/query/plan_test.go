@@ -113,3 +113,11 @@ func TestPlanNilInfoIsScan(t *testing.T) {
 		t.Fatalf("want ModeScan, got %v", p.Mode)
 	}
 }
+
+func TestPlanExistsFirstIsScan(t *testing.T) {
+	p := planFor(t, &dynamo.TableInfo{PartitionKey: "id"},
+		[]Condition{{Name: "id", Operator: OpExists, Value: ""}})
+	if p.Mode != ModeScan {
+		t.Fatalf("want ModeScan, got %v", p.Mode)
+	}
+}

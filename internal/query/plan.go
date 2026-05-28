@@ -52,6 +52,12 @@ func BuildPlan(info *dynamo.TableInfo, expr string, names map[string]string, val
 		return scanPlan
 	}
 
+	// An equals first-condition always carries a value placeholder; an empty
+	// values map means malformed input from a non-BuildExpression caller — Scan.
+	if len(values) == 0 {
+		return scanPlan
+	}
+
 	var firstPlaceholder string
 	for p := range values {
 		if strings.HasPrefix(p, ":val0") {
@@ -60,6 +66,8 @@ func BuildPlan(info *dynamo.TableInfo, expr string, names map[string]string, val
 		}
 	}
 	if firstPlaceholder == "" {
+		// Defensive fallback (mirrors the TUI); unreachable when the expression
+		// comes from BuildExpression, which always names the first value :val0.
 		for p := range values {
 			firstPlaceholder = p
 			break
