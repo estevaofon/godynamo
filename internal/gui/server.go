@@ -9,8 +9,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/godynamo/internal/dynamo"
 	"github.com/godynamo/internal/models"
+	"github.com/godynamo/internal/query"
 )
 
 type connectRequest struct {
@@ -62,6 +64,7 @@ func (s *server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /tables", s.handleListTables)
 	mux.HandleFunc("GET /tables/{name}/schema", s.handleSchema)
 	mux.HandleFunc("GET /tables/{name}/scan", s.handleScan)
+	mux.HandleFunc("POST /tables/{name}/query", s.handleQuery)
 	return s.withMiddleware(mux)
 }
 
@@ -222,6 +225,136 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 		"items":  items,
 		"cursor": cursor,
 		"count":  result.Count,
+	})
+}
+
+type queryRequest struct {
+	Conditions []queryCondition `json:"conditions"`
+	Limit      int32            `json:"limit"`
+	Cursor     string           `json:"cursor"`
+}
+
+type queryCondition struct {
+	Name  string `json:"name"`
+	Op    string `json:"op"`
+	Value string `json:"value"`
+}
+
+var queryOperators = map[string]query.Operator{
+	"eq":           query.OpEquals,
+	"ne":           query.OpNotEquals,
+	"gt":           query.OpGreaterThan,
+	"lt":           query.OpLessThan,
+	"ge":           query.OpGreaterOrEqual,
+	"le":           query.OpLessOrEqual,
+	"contains":     query.OpContains,
+	"not_contains": query.OpNotContains,
+	"begins_with":  query.OpBeginsWith,
+	"exists":       query.OpExists,
+	"not_exists":   query.OpNotExists,
+}
+
+func (s *server) handleQuery(w http.ResponseWriter, r *http.Request) {
+	backend, ok := s.getBackend()
+	if !ok {
+		writeError(w, http.StatusConflict, "not connected")
+		return
+	}
+	name := r.PathValue("name")
+
+	var req queryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	conds := make([]query.Condition, 0, len(req.Conditions))
+	for _, c := range req.Conditions {
+		op, known := queryOperators[c.Op]
+		if !known {
+			writeError(w, http.StatusBadRequest, "unknown operator: "+c.Op)
+			return
+		}
+		conds = append(conds, query.Condition{Name: c.Name, Operator: op, Value: c.Value})
+	}
+
+	limit := int32(500)
+	if req.Limit > 0 && req.Limit <= 1000 {
+		limit = req.Limit
+	}
+
+	startKey, err := decodeCursor(req.Cursor)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	info, err := backend.DescribeTable(r.Context(), name)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	expr, names, values := query.BuildExpression(conds)
+	plan := query.BuildPlan(info, expr, names, values)
+
+	var (
+		rawItems     []map[string]types.AttributeValue
+		lastKey      map[string]types.AttributeValue
+		count        int32
+		scannedCount int32
+		mode         string
+	)
+
+	if plan.Mode == query.ModeQuery {
+		mode = "query"
+		res, qerr := backend.QueryTable(r.Context(), dynamo.QueryInput{
+			TableName:                name,
+			IndexName:                plan.IndexName,
+			KeyConditionExpression:   plan.KeyConditionExpression,
+			FilterExpression:         plan.FilterExpression,
+			ExpressionAttributeNames: plan.Names,
+			ExpressionValues:         plan.Values,
+			Limit:                    limit,
+			ScanIndexForward:         true,
+			StartKey:                 startKey,
+		})
+		if qerr != nil {
+			writeError(w, http.StatusBadGateway, qerr.Error())
+			return
+		}
+		rawItems, lastKey, count, scannedCount = res.Items, res.LastEvaluatedKey, res.Count, res.ScannedCount
+	} else {
+		mode = "scan"
+		res, serr := backend.ScanTable(r.Context(), name, limit, startKey, plan.FilterExpression, plan.Names, plan.Values)
+		if serr != nil {
+			writeError(w, http.StatusBadGateway, serr.Error())
+			return
+		}
+		rawItems, lastKey, count, scannedCount = res.Items, res.LastEvaluatedKey, res.Count, res.ScannedCount
+	}
+
+	cursor, err := encodeCursor(lastKey)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	items := make([]map[string]interface{}, len(rawItems))
+	for i, item := range rawItems {
+		converted := make(map[string]interface{}, len(item))
+		for k, v := range item {
+			converted[k] = models.AttributeValueToInterface(v)
+		}
+		items[i] = converted
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"mode":         mode,
+		"items":        items,
+		"cursor":       cursor,
+		"count":        count,
+		"scannedCount": scannedCount,
 	})
 }
 

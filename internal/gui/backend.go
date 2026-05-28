@@ -15,6 +15,7 @@ type Backend interface {
 	ScanTable(ctx context.Context, name string, limit int32,
 		startKey map[string]types.AttributeValue,
 		filterExpr string, names map[string]string, values map[string]interface{}) (*dynamo.ScanResult, error)
+	QueryTable(ctx context.Context, input dynamo.QueryInput) (*dynamo.QueryResult, error)
 }
 
 // Compile-time check that the production client satisfies Backend.

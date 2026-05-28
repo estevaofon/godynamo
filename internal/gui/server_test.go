@@ -14,10 +14,12 @@ import (
 )
 
 type fakeBackend struct {
-	tables  []string
-	info    *dynamo.TableInfo
-	scan    *dynamo.ScanResult
-	scanErr error
+	tables   []string
+	info     *dynamo.TableInfo
+	scan     *dynamo.ScanResult
+	scanErr  error
+	query    *dynamo.QueryResult
+	queryErr error
 }
 
 func (f *fakeBackend) ListTables(ctx context.Context) ([]string, error) { return f.tables, nil }
@@ -30,6 +32,10 @@ func (f *fakeBackend) ScanTable(ctx context.Context, name string, limit int32,
 	startKey map[string]types.AttributeValue, filterExpr string,
 	names map[string]string, values map[string]interface{}) (*dynamo.ScanResult, error) {
 	return f.scan, f.scanErr
+}
+
+func (f *fakeBackend) QueryTable(ctx context.Context, input dynamo.QueryInput) (*dynamo.QueryResult, error) {
+	return f.query, f.queryErr
 }
 
 func newTestServer(b Backend) *server {
@@ -195,5 +201,67 @@ func TestScanBackendError(t *testing.T) {
 	rec := do(s, http.MethodGet, "/tables/x/scan", "")
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("want 502, got %d", rec.Code)
+	}
+}
+
+func TestQueryModeForPartitionKeyEquals(t *testing.T) {
+	s := newTestServer(&fakeBackend{
+		info: &dynamo.TableInfo{Name: "t", PartitionKey: "id"},
+		query: &dynamo.QueryResult{
+			Items: []map[string]types.AttributeValue{{"id": &types.AttributeValueMemberS{Value: "1"}}},
+			Count: 1,
+		},
+	})
+	rec := do(s, http.MethodPost, "/tables/t/query", `{"conditions":[{"name":"id","op":"eq","value":"1"}],"limit":10}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Mode  string                   `json:"mode"`
+		Items []map[string]interface{} `json:"items"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Mode != "query" {
+		t.Fatalf("want mode query, got %q", resp.Mode)
+	}
+	if len(resp.Items) != 1 || resp.Items[0]["id"] != "1" {
+		t.Fatalf("items=%v", resp.Items)
+	}
+}
+
+func TestQueryFallsBackToScanForNonKey(t *testing.T) {
+	s := newTestServer(&fakeBackend{
+		info: &dynamo.TableInfo{Name: "t", PartitionKey: "id"},
+		scan: &dynamo.ScanResult{
+			Items: []map[string]types.AttributeValue{{"status": &types.AttributeValueMemberS{Value: "active"}}},
+			Count: 1,
+		},
+	})
+	rec := do(s, http.MethodPost, "/tables/t/query", `{"conditions":[{"name":"status","op":"eq","value":"active"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Mode string `json:"mode"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Mode != "scan" {
+		t.Fatalf("want mode scan, got %q", resp.Mode)
+	}
+}
+
+func TestQueryUnknownOperator(t *testing.T) {
+	s := newTestServer(&fakeBackend{info: &dynamo.TableInfo{PartitionKey: "id"}})
+	rec := do(s, http.MethodPost, "/tables/t/query", `{"conditions":[{"name":"id","op":"bogus","value":"1"}]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
+	}
+}
+
+func TestQueryNotConnected(t *testing.T) {
+	s := newServer("test-token")
+	rec := do(s, http.MethodPost, "/tables/t/query", `{"conditions":[]}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d", rec.Code)
 	}
 }
