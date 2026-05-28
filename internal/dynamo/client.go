@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -86,8 +87,11 @@ func DiscoverRegionsWithTables(ctx context.Context, useLocal bool, endpoint stri
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// Use a semaphore to limit concurrent requests
-	sem := make(chan struct{}, 10)
+	// Scan every region concurrently. These are cheap ListTables calls and each
+	// goroutine has its own 8s deadline (below), so a single unreachable region
+	// no longer holds back the others. Sizing the semaphore to the full region
+	// list removes batching, so the worst case is one 8s timeout, not 8s per batch.
+	sem := make(chan struct{}, len(AWSRegions))
 
 	for _, region := range AWSRegions {
 		wg.Add(1)
@@ -96,7 +100,14 @@ func DiscoverRegionsWithTables(ctx context.Context, useLocal bool, endpoint stri
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(r))
+			// Per-region timeout: an unreachable opt-in region (e.g. me-south-1)
+			// can stall ~66s on SDK retry/backoff and, without a deadline, would
+			// block discovery of every other region. Legit regions answer in <1s,
+			// so 8s leaves a ~10x safety margin while capping dead regions.
+			regionCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			defer cancel()
+
+			cfg, err := config.LoadDefaultConfig(regionCtx, config.WithRegion(r))
 			if err != nil {
 				return
 			}
@@ -104,7 +115,7 @@ func DiscoverRegionsWithTables(ctx context.Context, useLocal bool, endpoint stri
 			client := dynamodb.NewFromConfig(cfg)
 
 			// Quick check - just get the first page
-			tables, err := client.ListTables(ctx, &dynamodb.ListTablesInput{
+			tables, err := client.ListTables(regionCtx, &dynamodb.ListTablesInput{
 				Limit: aws.Int32(100),
 			})
 			if err != nil {
