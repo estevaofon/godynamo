@@ -289,13 +289,23 @@ func (s *server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	expr, names, values := query.BuildExpression(conds)
+	if expr == "" {
+		// The /query endpoint requires a real filter; an empty expression would
+		// degrade to a full-table scan. Unfiltered browsing uses GET /scan.
+		writeError(w, http.StatusBadRequest, "query requires at least one complete condition (attribute, operator, and value)")
+		return
+	}
+
+	// DescribeTable is called per query to plan Query-vs-Scan. The schema is
+	// stable for the session, so this small per-request cost is acceptable for a
+	// loopback dev tool (caching can come with the region-switch phase).
 	info, err := backend.DescribeTable(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	expr, names, values := query.BuildExpression(conds)
 	plan := query.BuildPlan(info, expr, names, values)
 
 	var (

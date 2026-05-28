@@ -265,3 +265,11 @@ func TestQueryNotConnected(t *testing.T) {
 		t.Fatalf("want 409, got %d", rec.Code)
 	}
 }
+
+func TestQueryNoEffectiveFilter(t *testing.T) {
+	s := newTestServer(&fakeBackend{info: &dynamo.TableInfo{PartitionKey: "id"}})
+	rec := do(s, http.MethodPost, "/tables/t/query", `{"conditions":[]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
