@@ -89,8 +89,13 @@ async function onConnect() {
 function disconnect() {
   state.currentTable = null
   state.items = []
+  state.rendered = []
   state.conditions = []
   state.filterActive = false
+  state.indexes = []
+  state.strategy = { mode: '', index: '' }
+  state.override = { mode: 'auto', index: '' }
+  state.sort = { column: null, dir: 'asc' }
   state.cursor = ''
   state.selectedIdx = -1
   state.selectedItem = null
@@ -100,6 +105,7 @@ function disconnect() {
   $('status').textContent = ''
   $('mode-badge').textContent = ''
   hide($('filter-panel'))
+  hide($('filter-strategy'))
   hide($('main-screen'))
   $('connect-error').textContent = ''
   show($('connect-screen'))
@@ -169,7 +175,6 @@ async function selectTable(name) {
     $('export-json').disabled = false
     $('export-csv').disabled = false
     await loadPage(true)
-    updateAttrSuggestions()
   } catch (err) {
     $('status').textContent = 'Error: ' + err.message
   }
@@ -387,11 +392,7 @@ function onHeaderClick(col) {
 }
 
 function compareValues(a, b, dateCol) {
-  const am = a === null || a === undefined || a === ''
-  const bm = b === null || b === undefined || b === ''
-  if (am && bm) return 0
-  if (am) return 1
-  if (bm) return -1
+  // Callers (sortedItems) handle missing/null; a and b are present values here.
   if (typeof a === 'number' && typeof b === 'number') return a - b
   if (dateCol) {
     const at = Date.parse(a), bt = Date.parse(b)
@@ -404,7 +405,15 @@ function sortedItems() {
   const col = state.sort.column
   const dateCol = isDateColumn(col)
   const sign = state.sort.dir === 'asc' ? 1 : -1
-  return state.items.slice().sort((x, y) => compareValues(x[col], y[col], dateCol) * sign)
+  return state.items.slice().sort((x, y) => {
+    const a = x[col], b = y[col]
+    const am = a === null || a === undefined || a === ''
+    const bm = b === null || b === undefined || b === ''
+    if (am && bm) return 0
+    if (am) return 1   // missing always sorts last, regardless of direction
+    if (bm) return -1
+    return compareValues(a, b, dateCol) * sign
+  })
 }
 
 function strategyTarget() {
