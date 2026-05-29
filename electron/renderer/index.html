@@ -31,6 +31,7 @@
   <section id="main-screen" class="screen hidden">
     <aside id="sidebar">
       <button id="create-table-btn">+ New table</button>
+      <button id="disconnect-btn">Change connection</button>
       <input type="text" id="table-filter" placeholder="Filter tables…" />
       <ul id="table-list"></ul>
     </aside>
@@ -40,6 +41,8 @@
         <button id="new-item-btn" disabled>New item</button>
         <button id="filter-btn" disabled>Filter</button>
         <button id="schema-btn" disabled>Schema</button>
+        <button id="export-json" disabled>Export JSON</button>
+        <button id="export-csv" disabled>Export CSV</button>
         <label id="pagesize-label">Page size
           <select id="page-size">
             <option>50</option>
@@ -71,6 +74,9 @@
     <div class="detail-card">
       <header>
         <span id="detail-title"></span>
+        <input type="text" id="detail-search" placeholder="Find…" />
+        <span id="detail-matches"></span>
+        <button id="detail-copy">Copy</button>
         <button id="detail-edit" class="hidden">Edit</button>
         <button id="detail-delete" class="hidden">Delete</button>
         <button id="detail-close">✕</button>

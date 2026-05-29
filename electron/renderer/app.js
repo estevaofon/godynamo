@@ -35,6 +35,7 @@ const state = {
   scanned: 0,
   selectedIdx: -1,
   selectedItem: null,
+  detailText: '',
 }
 
 const $ = (id) => document.getElementById(id)
@@ -80,6 +81,25 @@ async function onConnect() {
   }
 }
 
+function disconnect() {
+  state.currentTable = null
+  state.items = []
+  state.conditions = []
+  state.filterActive = false
+  state.cursor = ''
+  state.selectedIdx = -1
+  state.selectedItem = null
+  $('grid').querySelector('thead').innerHTML = ''
+  $('grid').querySelector('tbody').innerHTML = ''
+  $('current-table').textContent = ''
+  $('status').textContent = ''
+  $('mode-badge').textContent = ''
+  hide($('filter-panel'))
+  hide($('main-screen'))
+  $('connect-error').textContent = ''
+  show($('connect-screen'))
+}
+
 function renderTableList() {
   const filter = $('table-filter').value.toLowerCase()
   const ul = $('table-list')
@@ -117,6 +137,8 @@ async function selectTable(name) {
   $('schema-btn').disabled = true
   $('filter-btn').disabled = true
   $('new-item-btn').disabled = true
+  $('export-json').disabled = true
+  $('export-csv').disabled = true
   $('more-btn').disabled = true
   hide($('filter-panel'))
   renderFilterRows()
@@ -131,6 +153,8 @@ async function selectTable(name) {
     $('schema-btn').disabled = false
     $('filter-btn').disabled = false
     $('new-item-btn').disabled = false
+    $('export-json').disabled = false
+    $('export-csv').disabled = false
     await loadPage(true)
   } catch (err) {
     $('status').textContent = 'Error: ' + err.message
@@ -314,22 +338,107 @@ function renderGrid() {
   })
 }
 
-function showItem(idx) {
-  state.selectedIdx = idx
-  state.selectedItem = state.items[idx]
-  $('detail-title').textContent = 'Item'
-  $('detail-body').textContent = JSON.stringify(state.items[idx], null, 2)
-  show($('detail-edit'))
-  show($('detail-delete'))
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function renderDetailBody() {
+  const body = $('detail-body')
+  const term = $('detail-search').value
+  if (!term) {
+    body.textContent = state.detailText
+    $('detail-matches').textContent = ''
+    return
+  }
+  const escaped = escapeHtml(state.detailText)
+  const escTerm = escapeHtml(term)
+  const lower = escaped.toLowerCase()
+  const tlower = escTerm.toLowerCase()
+  let result = ''
+  let i = 0
+  let count = 0
+  while (true) {
+    const idx = lower.indexOf(tlower, i)
+    if (idx === -1) {
+      result += escaped.slice(i)
+      break
+    }
+    result += escaped.slice(i, idx) + '<mark>' + escaped.slice(idx, idx + escTerm.length) + '</mark>'
+    i = idx + escTerm.length
+    count++
+  }
+  body.innerHTML = result
+  $('detail-matches').textContent = count + (count === 1 ? ' match' : ' matches')
+}
+
+function openDetail(title, text, withEditDelete) {
+  state.detailText = text
+  $('detail-title').textContent = title
+  $('detail-search').value = ''
+  renderDetailBody()
+  if (withEditDelete) {
+    show($('detail-edit'))
+    show($('detail-delete'))
+  } else {
+    hide($('detail-edit'))
+    hide($('detail-delete'))
+  }
   show($('detail'))
 }
 
+function showItem(idx) {
+  state.selectedIdx = idx
+  state.selectedItem = state.items[idx]
+  openDetail('Item', JSON.stringify(state.items[idx], null, 2), true)
+}
+
 function showSchema() {
-  $('detail-title').textContent = 'Schema: ' + state.currentTable
-  $('detail-body').textContent = state.schemaRaw || ''
-  hide($('detail-edit'))
-  hide($('detail-delete'))
-  show($('detail'))
+  openDetail('Schema: ' + state.currentTable, state.schemaRaw || '', false)
+}
+
+function copyDetail() {
+  navigator.clipboard.writeText(state.detailText).then(() => {
+    const btn = $('detail-copy')
+    const orig = btn.textContent
+    btn.textContent = 'Copied!'
+    setTimeout(() => { btn.textContent = orig }, 1200)
+  }).catch(() => {
+    $('detail-matches').textContent = 'copy failed'
+  })
+}
+
+function csvEscape(s) {
+  if (/[",\n]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"'
+  }
+  return s
+}
+
+function buildCSV() {
+  const cols = columnOrder()
+  const lines = [cols.map(csvEscape).join(',')]
+  state.items.forEach((item) => {
+    lines.push(cols.map((c) => csvEscape(cellText(item[c]))).join(','))
+  })
+  return lines.join('\n')
+}
+
+async function exportJSON() {
+  if (!state.currentTable) return
+  try {
+    await window.api.exportFile(state.currentTable + '.json', JSON.stringify(state.items, null, 2))
+  } catch (err) {
+    $('status').textContent = 'Export failed: ' + err.message
+  }
+}
+
+async function exportCSV() {
+  if (!state.currentTable) return
+  try {
+    await window.api.exportFile(state.currentTable + '.csv', buildCSV())
+  } catch (err) {
+    $('status').textContent = 'Export failed: ' + err.message
+  }
 }
 
 function openNewItem() {
@@ -445,8 +554,13 @@ window.addEventListener('DOMContentLoaded', () => {
   $('more-btn').addEventListener('click', () => loadPage(false))
   $('page-size').addEventListener('change', () => { if (state.currentTable) loadPage(true) })
   $('detail-close').addEventListener('click', () => hide($('detail')))
+  $('detail-search').addEventListener('input', renderDetailBody)
+  $('detail-copy').addEventListener('click', copyDetail)
   $('new-item-btn').addEventListener('click', openNewItem)
   $('create-table-btn').addEventListener('click', openCreateTable)
+  $('disconnect-btn').addEventListener('click', disconnect)
+  $('export-json').addEventListener('click', exportJSON)
+  $('export-csv').addEventListener('click', exportCSV)
   $('detail-edit').addEventListener('click', openEditItem)
   $('detail-delete').addEventListener('click', confirmDelete)
   $('editor-close').addEventListener('click', () => hide($('editor')))

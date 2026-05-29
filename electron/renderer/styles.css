@@ -65,3 +65,7 @@ table#grid { border-collapse: collapse; width: 100%; font-size: 12px; }
 .detail-card header { gap: 8px; }
 #detail-title { margin-right: auto; }
 .detail-card header button { margin-left: 0; }
+#disconnect-btn { width: 100%; margin-bottom: 8px; }
+#detail-search { background: #0b0f1a; color: #c8d3f5; border: 1px solid #2a3450; border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+#detail-matches { font-size: 11px; color: #828bb8; }
+#detail-body mark { background: #e0af68; color: #0b0f1a; }
