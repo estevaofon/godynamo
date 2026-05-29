@@ -397,18 +397,19 @@ function showSchema() {
 }
 
 function copyDetail() {
-  navigator.clipboard.writeText(state.detailText).then(() => {
-    const btn = $('detail-copy')
-    const orig = btn.textContent
-    btn.textContent = 'Copied!'
-    setTimeout(() => { btn.textContent = orig }, 1200)
-  }).catch(() => {
-    $('detail-matches').textContent = 'copy failed'
-  })
+  const btn = $('detail-copy')
+  const flash = (label) => {
+    clearTimeout(btn._restoreTimer)
+    btn.textContent = label
+    btn._restoreTimer = setTimeout(() => { btn.textContent = 'Copy' }, 1200)
+  }
+  navigator.clipboard.writeText(state.detailText)
+    .then(() => flash('Copied!'))
+    .catch(() => flash('Copy failed'))
 }
 
 function csvEscape(s) {
-  if (/[",\n]/.test(s)) {
+  if (/[",\n\r]/.test(s)) {
     return '"' + s.replace(/"/g, '""') + '"'
   }
   return s
@@ -420,7 +421,7 @@ function buildCSV() {
   state.items.forEach((item) => {
     lines.push(cols.map((c) => csvEscape(cellText(item[c]))).join(','))
   })
-  return lines.join('\n')
+  return lines.join('\r\n')
 }
 
 async function exportJSON() {
