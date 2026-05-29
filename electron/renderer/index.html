@@ -36,6 +36,7 @@
       <ul id="table-list"></ul>
     </aside>
     <main id="content">
+      <div id="tab-bar"></div>
       <header id="toolbar">
         <span id="current-table"></span>
         <button id="new-item-btn" disabled>New item</button>
@@ -68,6 +69,7 @@
       <div id="grid-wrap">
         <table id="grid"><thead></thead><tbody></tbody></table>
       </div>
+      <div id="content-empty" class="hidden">Select a table to open it in a tab.</div>
     </main>
   </section>
 
@@ -137,6 +139,10 @@
         <button id="confirm-yes">Delete</button>
       </div>
     </div>
+  </div>
+
+  <div id="ctx-menu" class="hidden">
+    <button id="ctx-open-new">Open in new tab</button>
   </div>
 
   <datalist id="attr-suggestions"></datalist>
