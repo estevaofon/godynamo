@@ -69,3 +69,8 @@ table#grid { border-collapse: collapse; width: 100%; font-size: 12px; }
 #detail-search { background: #0b0f1a; color: #c8d3f5; border: 1px solid #2a3450; border-radius: 6px; padding: 4px 8px; font-size: 12px; }
 #detail-matches { font-size: 11px; color: #828bb8; }
 #detail-body mark { background: #e0af68; color: #0b0f1a; }
+#grid th.sortable { cursor: pointer; user-select: none; }
+#grid th.sortable:hover { color: #7aa2f7; }
+#filter-strategy { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding-top: 8px; border-top: 1px solid #2a3450; }
+.strategy-label { font-size: 12px; color: #828bb8; }
+.strategy-override { font-size: 12px; padding: 2px 8px; }
