@@ -128,3 +128,76 @@ func BuildPlan(info *dynamo.TableInfo, expr string, names map[string]string, val
 		Values:                 qValues,
 	}
 }
+
+// PlanForIndex builds a Query plan that targets a specific index, or the base
+// table when indexName == "". The first equality (=) condition on that target's
+// partition key becomes the key condition; the remaining conditions become the
+// filter (mirroring BuildPlan: only the partition key enters the key condition,
+// any sort-key condition stays in the filter). It returns an error when the
+// schema is missing, the index is unknown, or there is no equality on the
+// target's partition key.
+func PlanForIndex(info *dynamo.TableInfo, conds []Condition, indexName string) (Plan, error) {
+	if info == nil {
+		return Plan{}, fmt.Errorf("table schema unavailable")
+	}
+
+	keyAttr := info.PartitionKey
+	if indexName != "" {
+		found := false
+		for _, gsi := range info.GSIs {
+			if gsi.Name == indexName {
+				keyAttr = gsi.PartitionKey
+				found = true
+				break
+			}
+		}
+		if !found {
+			return Plan{}, fmt.Errorf("unknown index: %s", indexName)
+		}
+	}
+	if keyAttr == "" {
+		return Plan{}, fmt.Errorf("target has no partition key")
+	}
+
+	keyIdx := -1
+	for i, c := range conds {
+		if c.Name == keyAttr && c.Operator == OpEquals && strings.TrimSpace(c.Value) != "" {
+			keyIdx = i
+			break
+		}
+	}
+	if keyIdx < 0 {
+		target := "table"
+		if indexName != "" {
+			target = "index " + indexName
+		}
+		return Plan{}, fmt.Errorf("%s requires an equality (=) condition on its partition key %q", target, keyAttr)
+	}
+
+	rest := make([]Condition, 0, len(conds))
+	for i, c := range conds {
+		if i != keyIdx {
+			rest = append(rest, c)
+		}
+	}
+
+	names := map[string]string{"#pk": keyAttr}
+	values := map[string]interface{}{":pkval": ParseValue(conds[keyIdx].Value)}
+
+	filterExpr, fNames, fValues := BuildExpression(rest)
+	for k, v := range fNames {
+		names[k] = v
+	}
+	for k, v := range fValues {
+		values[k] = v
+	}
+
+	return Plan{
+		Mode:                   ModeQuery,
+		IndexName:              indexName,
+		KeyConditionExpression: "#pk = :pkval",
+		FilterExpression:       filterExpr,
+		Names:                  names,
+		Values:                 values,
+	}, nil
+}

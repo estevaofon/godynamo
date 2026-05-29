@@ -121,3 +121,83 @@ func TestPlanExistsFirstIsScan(t *testing.T) {
 		t.Fatalf("want ModeScan, got %v", p.Mode)
 	}
 }
+
+func TestPlanForIndexForcesGSI(t *testing.T) {
+	info := &dynamo.TableInfo{
+		PartitionKey: "id",
+		GSIs:         []dynamo.IndexInfo{{Name: "by-user", PartitionKey: "user_id"}},
+	}
+	conds := []Condition{
+		{Name: "status", Operator: OpEquals, Value: "active"},
+		{Name: "user_id", Operator: OpEquals, Value: "u1"},
+	}
+	p, err := PlanForIndex(info, conds, "by-user")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Mode != ModeQuery {
+		t.Fatalf("want ModeQuery, got %v", p.Mode)
+	}
+	if p.IndexName != "by-user" {
+		t.Fatalf("index=%q", p.IndexName)
+	}
+	if p.KeyConditionExpression != "#pk = :pkval" {
+		t.Fatalf("keyCond=%q", p.KeyConditionExpression)
+	}
+	if p.Names["#pk"] != "user_id" {
+		t.Fatalf("names=%v", p.Names)
+	}
+	if p.Values[":pkval"] != "u1" {
+		t.Fatalf("values=%v", p.Values)
+	}
+	if p.FilterExpression != "#attr0 = :val0" {
+		t.Fatalf("filter=%q", p.FilterExpression)
+	}
+	if p.Names["#attr0"] != "status" || p.Values[":val0"] != "active" {
+		t.Fatalf("filter names/values=%v %v", p.Names, p.Values)
+	}
+}
+
+func TestPlanForIndexForcesBaseTable(t *testing.T) {
+	info := &dynamo.TableInfo{
+		PartitionKey: "id",
+		GSIs:         []dynamo.IndexInfo{{Name: "by-user", PartitionKey: "user_id"}},
+	}
+	// user_id matches the GSI, but forcing "" must use the table PK "id".
+	conds := []Condition{
+		{Name: "user_id", Operator: OpEquals, Value: "u1"},
+		{Name: "id", Operator: OpEquals, Value: "42"},
+	}
+	p, err := PlanForIndex(info, conds, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.IndexName != "" {
+		t.Fatalf("want base table, got index %q", p.IndexName)
+	}
+	if p.Names["#pk"] != "id" {
+		t.Fatalf("names=%v", p.Names)
+	}
+	if p.Values[":pkval"] != float64(42) {
+		t.Fatalf("pkval=%v (%T)", p.Values[":pkval"], p.Values[":pkval"])
+	}
+}
+
+func TestPlanForIndexErrorsWithoutEqualityOnPK(t *testing.T) {
+	info := &dynamo.TableInfo{
+		PartitionKey: "id",
+		GSIs:         []dynamo.IndexInfo{{Name: "by-user", PartitionKey: "user_id"}},
+	}
+	conds := []Condition{{Name: "user_id", Operator: OpBeginsWith, Value: "u"}}
+	if _, err := PlanForIndex(info, conds, "by-user"); err == nil {
+		t.Fatal("want error when no equality on the index PK")
+	}
+}
+
+func TestPlanForIndexErrorsOnUnknownIndex(t *testing.T) {
+	info := &dynamo.TableInfo{PartitionKey: "id"}
+	conds := []Condition{{Name: "id", Operator: OpEquals, Value: "1"}}
+	if _, err := PlanForIndex(info, conds, "nope"); err == nil {
+		t.Fatal("want error on unknown index")
+	}
+}
