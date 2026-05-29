@@ -22,25 +22,127 @@ const OPERATORS = [
 
 const VALUE_OPS = new Set(['eq', 'ne', 'gt', 'lt', 'ge', 'le', 'contains', 'not_contains', 'begins_with'])
 
-const state = {
-  tables: [],
-  currentTable: null,
-  keys: { partition: '', sort: '' },
-  indexes: [],
-  schemaRaw: '',
-  cursor: '',
-  items: [],
-  rendered: [],
-  conditions: [],
-  filterActive: false,
-  mode: '',
-  scanned: 0,
-  strategy: { mode: '', index: '' },
-  override: { mode: 'auto', index: '' },
-  sort: { column: null, dir: 'asc' },
-  selectedIdx: -1,
-  selectedItem: null,
-  detailText: '',
+const conn = { tables: [], tabs: [], activeId: null, nextId: 1 }
+let state = null // alias to the active tab object, or null when no tab is open
+
+function newTab(name) {
+  return {
+    id: conn.nextId++, currentTable: name,
+    loaded: false, status: '', scrollTop: 0, filterOpen: false,
+    keys: { partition: '', sort: '' }, indexes: [], schemaRaw: '',
+    cursor: '', items: [], rendered: [],
+    conditions: [], filterActive: false, mode: '', scanned: 0,
+    strategy: { mode: '', index: '' }, override: { mode: 'auto', index: '' },
+    sort: { column: null, dir: 'asc' }, selectedIdx: -1, selectedItem: null, detailText: '',
+  }
+}
+
+function showEmptyState() {
+  hide($('grid-wrap'))
+  show($('content-empty'))
+  hide($('filter-panel'))
+  hide($('filter-strategy'))
+  $('status').textContent = ''
+  $('mode-badge').textContent = ''
+  $('current-table').textContent = ''
+  ;['schema-btn', 'filter-btn', 'new-item-btn', 'export-json', 'export-csv', 'more-btn']
+    .forEach((id) => { $(id).disabled = true })
+}
+
+function syncToolbar() {
+  const ready = !!(state && state.loaded)
+  ;['schema-btn', 'filter-btn', 'new-item-btn', 'export-json', 'export-csv']
+    .forEach((id) => { $(id).disabled = !ready })
+  $('more-btn').disabled = !(state && state.cursor)
+}
+
+function hideContextMenu() { hide($('ctx-menu')) }
+
+function renderTabs() {
+  const bar = $('tab-bar')
+  bar.innerHTML = ''
+  conn.tabs.forEach((t) => {
+    const el = document.createElement('div')
+    el.className = 'tab' + (t.id === conn.activeId ? ' active' : '')
+    const label = document.createElement('span')
+    label.className = 'tab-label'
+    label.textContent = t.currentTable
+    el.appendChild(label)
+    const close = document.createElement('button')
+    close.className = 'tab-close'
+    close.textContent = '✕'
+    close.title = 'Close tab'
+    close.addEventListener('click', (e) => { e.stopPropagation(); closeTab(t.id) })
+    el.appendChild(close)
+    el.addEventListener('click', () => activate(t.id))
+    bar.appendChild(el)
+  })
+}
+
+function openTable(name, opts) {
+  const forceNew = !!(opts && opts.forceNew)
+  if (!forceNew) {
+    const existing = conn.tabs.find((t) => t.currentTable === name)
+    if (existing) { activate(existing.id); return }
+  }
+  const tab = newTab(name)
+  conn.tabs.push(tab)
+  activate(tab.id)
+  loadTab(tab)
+}
+
+function activate(id) {
+  conn.activeId = id
+  state = conn.tabs.find((t) => t.id === id) || null
+  hide($('detail'))
+  hide($('editor'))
+  hideContextMenu()
+  if (!state) { showEmptyState(); renderTabs(); renderTableList(); return }
+  show($('grid-wrap'))
+  hide($('content-empty'))
+  renderTabs()
+  renderTableList()
+  renderFilterRows()
+  if (state.filterOpen) show($('filter-panel')); else hide($('filter-panel'))
+  renderStrategyBar()
+  updateAttrSuggestions()
+  renderGrid()
+  $('grid-wrap').scrollTop = state.scrollTop
+  syncToolbar()
+  if (state.loaded) updateStatus()
+  else $('status').textContent = state.status || 'Loading…'
+}
+
+async function loadTab(tab) {
+  tab.status = 'Loading…'
+  if (tab.id === conn.activeId) $('status').textContent = tab.status
+  try {
+    const schema = await window.api.schema(tab.currentTable)
+    const info = schema.info || {}
+    tab.keys = { partition: info.PartitionKey || '', sort: info.SortKey || '' }
+    tab.indexes = buildIndexList(info)
+    tab.schemaRaw = schema.rawJSON || JSON.stringify(info, null, 2)
+    tab.loaded = true
+    if (tab.id === conn.activeId) syncToolbar()
+    await loadPage(tab, true)
+  } catch (err) {
+    tab.status = 'Error: ' + err.message
+    if (tab.id === conn.activeId) $('status').textContent = tab.status
+  }
+}
+
+function closeTab(id) {
+  const i = conn.tabs.findIndex((t) => t.id === id)
+  if (i === -1) return
+  conn.tabs.splice(i, 1)
+  if (conn.activeId === id) {
+    const next = conn.tabs[i] || conn.tabs[i - 1]
+    if (next) { activate(next.id) }
+    else { conn.activeId = null; state = null; showEmptyState(); renderTabs(); renderTableList() }
+  } else {
+    renderTabs()
+    renderTableList()
+  }
 }
 
 const $ = (id) => document.getElementById(id)
@@ -75,8 +177,9 @@ async function onConnect() {
   $('connect-btn').disabled = true
   try {
     const data = await window.api.connect(cfg)
-    state.tables = data.tables || []
+    conn.tables = data.tables || []
     renderTableList()
+    showEmptyState()
     hide($('connect-screen'))
     show($('main-screen'))
   } catch (err) {
@@ -87,18 +190,12 @@ async function onConnect() {
 }
 
 function disconnect() {
-  state.currentTable = null
-  state.items = []
-  state.rendered = []
-  state.conditions = []
-  state.filterActive = false
-  state.indexes = []
-  state.strategy = { mode: '', index: '' }
-  state.override = { mode: 'auto', index: '' }
-  state.sort = { column: null, dir: 'asc' }
-  state.cursor = ''
-  state.selectedIdx = -1
-  state.selectedItem = null
+  conn.tables = []
+  conn.tabs = []
+  conn.activeId = null
+  conn.nextId = 1
+  state = null
+  renderTabs()
   $('grid').querySelector('thead').innerHTML = ''
   $('grid').querySelector('tbody').innerHTML = ''
   $('current-table').textContent = ''
@@ -106,6 +203,9 @@ function disconnect() {
   $('mode-badge').textContent = ''
   hide($('filter-panel'))
   hide($('filter-strategy'))
+  hide($('detail'))
+  hide($('editor'))
+  hideContextMenu()
   hide($('main-screen'))
   $('connect-error').textContent = ''
   show($('connect-screen'))
@@ -115,117 +215,71 @@ function renderTableList() {
   const filter = $('table-filter').value.toLowerCase()
   const ul = $('table-list')
   ul.innerHTML = ''
-  state.tables
+  const activeName = state ? state.currentTable : null
+  const openNames = new Set(conn.tabs.map((t) => t.currentTable))
+  conn.tables
     .filter((t) => t.toLowerCase().includes(filter))
     .forEach((t) => {
       const li = document.createElement('li')
       li.textContent = t
-      li.className = t === state.currentTable ? 'active' : ''
-      li.addEventListener('click', () => selectTable(t))
+      li.className = (t === activeName ? 'active' : '') + (openNames.has(t) ? ' open' : '')
+      li.addEventListener('click', () => openTable(t))
       ul.appendChild(li)
     })
 }
 
 async function refreshTables() {
   const data = await window.api.listTables()
-  state.tables = data.tables || []
+  conn.tables = data.tables || []
   renderTableList()
-}
-
-async function selectTable(name) {
-  state.currentTable = name
-  state.cursor = ''
-  state.items = []
-  state.rendered = []
-  state.conditions = []
-  state.filterActive = false
-  state.mode = ''
-  state.scanned = 0
-  state.indexes = []
-  state.strategy = { mode: '', index: '' }
-  state.override = { mode: 'auto', index: '' }
-  state.sort = { column: null, dir: 'asc' }
-  state.selectedIdx = -1
-  state.selectedItem = null
-  $('current-table').textContent = name
-  $('status').textContent = 'Loading…'
-  $('mode-badge').textContent = ''
-  $('schema-btn').disabled = true
-  $('filter-btn').disabled = true
-  $('new-item-btn').disabled = true
-  $('export-json').disabled = true
-  $('export-csv').disabled = true
-  $('more-btn').disabled = true
-  hide($('filter-panel'))
-  hide($('filter-strategy'))
-  renderFilterRows()
-  renderTableList()
-  try {
-    const schema = await window.api.schema(name)
-    const info = schema.info || {}
-    state.keys = {
-      partition: info.PartitionKey || '',
-      sort: info.SortKey || '',
-    }
-    state.indexes = buildIndexList(info)
-    state.schemaRaw = schema.rawJSON || JSON.stringify(info, null, 2)
-    $('schema-btn').disabled = false
-    $('filter-btn').disabled = false
-    $('new-item-btn').disabled = false
-    $('export-json').disabled = false
-    $('export-csv').disabled = false
-    await loadPage(true)
-  } catch (err) {
-    $('status').textContent = 'Error: ' + err.message
-  }
 }
 
 function pageSize() {
   return parseInt($('page-size').value, 10) || 500
 }
 
-function activeConditions() {
-  return state.conditions
+function activeConditions(tab) {
+  return tab.conditions
     .filter((c) => c.name.trim() !== '' && (!VALUE_OPS.has(c.op) || c.value.trim() !== ''))
     .map((c) => ({ name: c.name, op: c.op, value: c.value }))
 }
 
-async function loadPage(reset) {
-  const cursor = reset ? '' : state.cursor
+async function loadPage(tab, reset) {
+  const cursor = reset ? '' : tab.cursor
   try {
     let data
-    if (state.filterActive) {
-      data = await window.api.query(state.currentTable, {
-        conditions: activeConditions(),
+    if (tab.filterActive) {
+      data = await window.api.query(tab.currentTable, {
+        conditions: activeConditions(tab),
         limit: pageSize(),
         cursor,
-        strategy: state.override,
+        strategy: tab.override,
       })
-      state.mode = data.mode || ''
-      state.strategy = { mode: data.mode || '', index: data.index || '' }
+      tab.mode = data.mode || ''
+      tab.strategy = { mode: data.mode || '', index: data.index || '' }
     } else {
-      data = await window.api.scan(state.currentTable, cursor, pageSize())
-      state.mode = ''
+      data = await window.api.scan(tab.currentTable, cursor, pageSize())
+      tab.mode = ''
     }
     if (reset) {
-      state.items = []
-      state.scanned = 0
-      state.selectedIdx = -1
-      state.selectedItem = null
+      tab.items = []
+      tab.scanned = 0
+      tab.selectedIdx = -1
+      tab.selectedItem = null
     }
-    state.items = state.items.concat(data.items || [])
-    state.cursor = data.cursor || ''
-    if (state.filterActive) {
-      state.scanned += data.scannedCount || 0
+    tab.items = tab.items.concat(data.items || [])
+    tab.cursor = data.cursor || ''
+    if (tab.filterActive) tab.scanned += data.scannedCount || 0
+    if (tab.id === conn.activeId) {
+      syncToolbar()
+      updateStatus()
+      renderGrid()
+      renderStrategyBar()
+      updateAttrSuggestions()
     }
-    $('more-btn').disabled = !state.cursor
-    updateStatus()
-    renderGrid()
-    renderStrategyBar()
-    updateAttrSuggestions()
   } catch (err) {
-    $('status').textContent = 'Error: ' + err.message
-    $('more-btn').disabled = !state.cursor
+    tab.status = 'Error: ' + err.message
+    if (tab.id === conn.activeId) { $('status').textContent = tab.status; syncToolbar() }
   }
 }
 
@@ -238,6 +292,7 @@ function updateStatus() {
     $('mode-badge').textContent = ''
   }
   if (state.cursor) s += ' · more available'
+  state.status = s
   $('status').textContent = s
 }
 
@@ -303,16 +358,18 @@ function toggleFilter() {
   if (panel.classList.contains('hidden')) {
     if (state.conditions.length === 0) addCondition()
     show(panel)
+    state.filterOpen = true
   } else {
     hide(panel)
+    state.filterOpen = false
   }
 }
 
 async function applyFilter() {
-  state.filterActive = activeConditions().length > 0
+  state.filterActive = activeConditions(state).length > 0
   state.override = { mode: 'auto', index: '' }
   state.cursor = ''
-  await loadPage(true)
+  await loadPage(state, true)
 }
 
 async function clearFilter() {
@@ -322,7 +379,7 @@ async function clearFilter() {
   renderFilterRows()
   hide($('filter-strategy'))
   state.cursor = ''
-  await loadPage(true)
+  await loadPage(state, true)
 }
 
 function filterKeydown(e) {
@@ -424,7 +481,7 @@ function strategyTarget() {
 
 function viableIndexes() {
   const eqAttrs = new Set(
-    activeConditions().filter((c) => c.op === 'eq').map((c) => c.name)
+    activeConditions(state).filter((c) => c.op === 'eq').map((c) => c.name)
   )
   return state.indexes.filter((ix) => (ix.kind === 'table' || ix.kind === 'gsi') && ix.pk && eqAttrs.has(ix.pk))
 }
@@ -454,7 +511,7 @@ function renderStrategyBar() {
     b.addEventListener('click', () => {
       state.override = override
       state.cursor = ''
-      loadPage(true)
+      loadPage(state, true)
     })
     bar.appendChild(b)
   }
@@ -663,7 +720,7 @@ async function saveEditor() {
   try {
     await window.api.saveItem(state.currentTable, text)
     hide($('editor'))
-    await loadPage(true)
+    await loadPage(state, true)
   } catch (err) {
     $('editor-error').textContent = err.message
   } finally {
@@ -684,7 +741,7 @@ async function doDelete() {
   try {
     await window.api.deleteItem(state.currentTable, json)
     hide($('detail'))
-    await loadPage(true)
+    await loadPage(state, true)
   } catch (err) {
     $('status').textContent = 'Error: ' + err.message
   }
@@ -739,8 +796,9 @@ window.addEventListener('DOMContentLoaded', () => {
   $('filter-add').addEventListener('click', addCondition)
   $('filter-apply').addEventListener('click', applyFilter)
   $('filter-clear').addEventListener('click', clearFilter)
-  $('more-btn').addEventListener('click', () => loadPage(false))
-  $('page-size').addEventListener('change', () => { if (state.currentTable) loadPage(true) })
+  $('more-btn').addEventListener('click', () => loadPage(state, false))
+  $('page-size').addEventListener('change', () => { if (state) loadPage(state, true) })
+  $('grid-wrap').addEventListener('scroll', () => { if (state) state.scrollTop = $('grid-wrap').scrollTop })
   $('detail-close').addEventListener('click', () => hide($('detail')))
   $('detail-search').addEventListener('input', renderDetailBody)
   $('detail-copy').addEventListener('click', copyDetail)
