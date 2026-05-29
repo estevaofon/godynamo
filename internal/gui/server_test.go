@@ -366,3 +366,11 @@ func TestWriteNotConnected(t *testing.T) {
 		t.Fatalf("want 409, got %d", rec.Code)
 	}
 }
+
+func TestCreateTableRequiresPKType(t *testing.T) {
+	s := newTestServer(&fakeBackend{})
+	rec := do(s, http.MethodPost, "/tables", `{"name":"T","pk":"id"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
+	}
+}

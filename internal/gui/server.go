@@ -435,6 +435,10 @@ func (s *server) handleDeleteItem(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	if info == nil || info.PartitionKey == "" {
+		writeError(w, http.StatusBadGateway, "table metadata unavailable or missing a partition key")
+		return
+	}
 
 	key := make(map[string]types.AttributeValue)
 	if info.PartitionKey != "" {
@@ -473,8 +477,8 @@ func (s *server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name == "" || req.PK == "" {
-		writeError(w, http.StatusBadRequest, "table name and partition key are required")
+	if req.Name == "" || req.PK == "" || req.PKType == "" {
+		writeError(w, http.StatusBadRequest, "table name, partition key, and partition key type are required")
 		return
 	}
 
