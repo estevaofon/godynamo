@@ -34,6 +34,7 @@ const state = {
   mode: '',
   scanned: 0,
   selectedIdx: -1,
+  selectedItem: null,
 }
 
 const $ = (id) => document.getElementById(id)
@@ -109,6 +110,7 @@ async function selectTable(name) {
   state.mode = ''
   state.scanned = 0
   state.selectedIdx = -1
+  state.selectedItem = null
   $('current-table').textContent = name
   $('status').textContent = 'Loading…'
   $('mode-badge').textContent = ''
@@ -163,6 +165,8 @@ async function loadPage(reset) {
     if (reset) {
       state.items = []
       state.scanned = 0
+      state.selectedIdx = -1
+      state.selectedItem = null
     }
     state.items = state.items.concat(data.items || [])
     state.cursor = data.cursor || ''
@@ -312,6 +316,7 @@ function renderGrid() {
 
 function showItem(idx) {
   state.selectedIdx = idx
+  state.selectedItem = state.items[idx]
   $('detail-title').textContent = 'Item'
   $('detail-body').textContent = JSON.stringify(state.items[idx], null, 2)
   show($('detail-edit'))
@@ -328,19 +333,24 @@ function showSchema() {
 }
 
 function openNewItem() {
+  const tmpl = {}
+  if (state.keys.partition) tmpl[state.keys.partition] = ''
+  if (state.keys.sort) tmpl[state.keys.sort] = ''
   $('editor-title').textContent = 'New item'
-  $('editor-text').value = '{\n  \n}'
+  $('editor-text').value = JSON.stringify(tmpl, null, 2)
   $('editor-error').textContent = ''
   show($('editor'))
+  $('editor-text').focus()
 }
 
 function openEditItem() {
-  if (state.selectedIdx < 0) return
+  if (!state.selectedItem) return
   $('editor-title').textContent = 'Edit item'
-  $('editor-text').value = JSON.stringify(state.items[state.selectedIdx], null, 2)
+  $('editor-text').value = JSON.stringify(state.selectedItem, null, 2)
   $('editor-error').textContent = ''
   hide($('detail'))
   show($('editor'))
+  $('editor-text').focus()
 }
 
 async function saveEditor() {
@@ -365,15 +375,15 @@ async function saveEditor() {
 }
 
 function confirmDelete() {
-  if (state.selectedIdx < 0) return
+  if (!state.selectedItem) return
   $('confirm-text').textContent = 'Delete this item? This cannot be undone.'
   show($('confirm'))
 }
 
 async function doDelete() {
   hide($('confirm'))
-  if (state.selectedIdx < 0) return
-  const json = JSON.stringify(state.items[state.selectedIdx])
+  if (!state.selectedItem) return
+  const json = JSON.stringify(state.selectedItem)
   try {
     await window.api.deleteItem(state.currentTable, json)
     hide($('detail'))
