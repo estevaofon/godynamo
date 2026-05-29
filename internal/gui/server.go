@@ -122,6 +122,23 @@ func (s *server) backendFor(region string) (Backend, error) {
 	return b, nil
 }
 
+// resolveRegion reads the required ?region= param and returns its backend.
+// It writes the appropriate error response and returns ok=false on a missing
+// region (400) or a client-creation failure (502).
+func (s *server) resolveRegion(w http.ResponseWriter, r *http.Request) (Backend, bool) {
+	region := r.URL.Query().Get("region")
+	if region == "" {
+		writeError(w, http.StatusBadRequest, "region is required")
+		return nil, false
+	}
+	b, err := s.backendFor(region)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
+		return nil, false
+	}
+	return b, true
+}
+
 func (s *server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 	names, def, err := s.profilesFn()
 	if err != nil {
@@ -177,14 +194,8 @@ func (s *server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleSchema(w http.ResponseWriter, r *http.Request) {
-	region := r.URL.Query().Get("region")
-	if region == "" {
-		writeError(w, http.StatusBadRequest, "region is required")
-		return
-	}
-	backend, err := s.backendFor(region)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
+	backend, ok := s.resolveRegion(w, r)
+	if !ok {
 		return
 	}
 	info, err := backend.DescribeTable(r.Context(), r.PathValue("name"))
@@ -199,14 +210,8 @@ func (s *server) handleSchema(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
-	region := r.URL.Query().Get("region")
-	if region == "" {
-		writeError(w, http.StatusBadRequest, "region is required")
-		return
-	}
-	backend, err := s.backendFor(region)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
+	backend, ok := s.resolveRegion(w, r)
+	if !ok {
 		return
 	}
 	name := r.PathValue("name")
@@ -288,14 +293,8 @@ var queryOperators = map[string]query.Operator{
 }
 
 func (s *server) handleQuery(w http.ResponseWriter, r *http.Request) {
-	region := r.URL.Query().Get("region")
-	if region == "" {
-		writeError(w, http.StatusBadRequest, "region is required")
-		return
-	}
-	backend, err := s.backendFor(region)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
+	backend, ok := s.resolveRegion(w, r)
+	if !ok {
 		return
 	}
 	name := r.PathValue("name")
@@ -436,14 +435,8 @@ type createTableRequest struct {
 }
 
 func (s *server) handlePutItem(w http.ResponseWriter, r *http.Request) {
-	region := r.URL.Query().Get("region")
-	if region == "" {
-		writeError(w, http.StatusBadRequest, "region is required")
-		return
-	}
-	backend, err := s.backendFor(region)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
+	backend, ok := s.resolveRegion(w, r)
+	if !ok {
 		return
 	}
 	name := r.PathValue("name")
@@ -466,14 +459,8 @@ func (s *server) handlePutItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleDeleteItem(w http.ResponseWriter, r *http.Request) {
-	region := r.URL.Query().Get("region")
-	if region == "" {
-		writeError(w, http.StatusBadRequest, "region is required")
-		return
-	}
-	backend, err := s.backendFor(region)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
+	backend, ok := s.resolveRegion(w, r)
+	if !ok {
 		return
 	}
 	name := r.PathValue("name")
@@ -525,14 +512,8 @@ func (s *server) handleDeleteItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
-	region := r.URL.Query().Get("region")
-	if region == "" {
-		writeError(w, http.StatusBadRequest, "region is required")
-		return
-	}
-	backend, err := s.backendFor(region)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
+	backend, ok := s.resolveRegion(w, r)
+	if !ok {
 		return
 	}
 
