@@ -8,31 +8,15 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <section id="connect-screen" class="screen">
-    <div class="connect-card">
-      <h1>⚡ GoDynamo</h1>
-      <div class="field">
-        <label><input type="radio" name="mode" value="aws" checked /> AWS</label>
-        <label><input type="radio" name="mode" value="local" /> DynamoDB Local</label>
-      </div>
-      <div class="field" id="aws-fields">
-        <label for="region">Region</label>
-        <select id="region"></select>
-      </div>
-      <div class="field hidden" id="local-fields">
-        <label for="endpoint">Endpoint</label>
-        <input type="text" id="endpoint" value="http://localhost:8000" />
-      </div>
-      <button id="connect-btn">Connect</button>
-      <p id="connect-error" class="error"></p>
-    </div>
-  </section>
-
-  <section id="main-screen" class="screen hidden">
+  <section id="main-screen" class="screen">
     <aside id="sidebar">
+      <div id="profile-row">
+        <select id="profile-select"></select>
+        <button id="refresh-btn" title="Refresh regions">⟳</button>
+      </div>
       <button id="create-table-btn">+ New table</button>
-      <button id="disconnect-btn">Change connection</button>
       <input type="text" id="table-filter" placeholder="Filter tables…" />
+      <div id="sidebar-msg" class="sidebar-msg hidden"></div>
       <ul id="table-list"></ul>
     </aside>
     <main id="content">
@@ -110,6 +94,9 @@
       </header>
       <div class="ct-form">
         <label>Table name <input type="text" id="ct-name" /></label>
+        <label>Region
+          <select id="ct-region"></select>
+        </label>
         <label>Partition key <input type="text" id="ct-pk" /></label>
         <label>Partition key type
           <select id="ct-pktype"><option>S</option><option>N</option><option>B</option></select>

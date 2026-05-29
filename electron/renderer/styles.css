@@ -3,9 +3,6 @@ body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #0b0f1a; colo
 .hidden { display: none !important; }
 .screen { height: 100vh; }
 
-#connect-screen { display: flex; align-items: center; justify-content: center; }
-.connect-card { background: #131a2b; padding: 32px; border-radius: 12px; border: 1px solid #2a3450; width: 360px; }
-.connect-card h1 { margin-top: 0; color: #7aa2f7; }
 .field { margin: 16px 0; display: flex; flex-direction: column; gap: 6px; }
 .field label { font-size: 14px; }
 select, input[type="text"], button {
@@ -65,7 +62,6 @@ table#grid { border-collapse: collapse; width: 100%; font-size: 12px; }
 .detail-card header { gap: 8px; }
 #detail-title { margin-right: auto; }
 .detail-card header button { margin-left: 0; }
-#disconnect-btn { width: 100%; margin-bottom: 8px; }
 #detail-search { background: #0b0f1a; color: #c8d3f5; border: 1px solid #2a3450; border-radius: 6px; padding: 4px 8px; font-size: 12px; }
 #detail-matches { font-size: 11px; color: #828bb8; }
 #detail-body mark { background: #e0af68; color: #0b0f1a; }
@@ -88,3 +84,10 @@ table#grid { border-collapse: collapse; width: 100%; font-size: 12px; }
 #ctx-menu button:hover { background: #2a3450; }
 #table-list li.open { color: #9aa5ce; }
 #table-list li.open.active { color: #7aa2f7; }
+#profile-row { display: flex; gap: 6px; margin-bottom: 8px; }
+#profile-row select { flex: 1; margin-bottom: 0; }
+#refresh-btn { padding: 6px 10px; margin-bottom: 0; }
+.sidebar-msg { font-size: 12px; color: #828bb8; padding: 6px 8px; line-height: 1.4; }
+#table-list li.region-head { font-weight: bold; color: #c8d3f5; user-select: none; }
+#table-list li.region-head:hover { background: #1b2336; }
+#table-list li.table-row { padding-left: 22px; }
