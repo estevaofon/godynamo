@@ -36,7 +36,14 @@ app.whenReady().then(() => {
   }))
   // Export: native Save dialog + write file (renderer builds the content).
   ipcMain.handle('export-file', async (_event, { defaultName, content }) => {
-    const { canceled, filePath } = await dialog.showSaveDialog({ defaultPath: defaultName })
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      defaultPath: defaultName,
+      filters: [
+        { name: 'JSON', extensions: ['json'] },
+        { name: 'CSV', extensions: ['csv'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    })
     if (canceled || !filePath) {
       return { canceled: true }
     }
