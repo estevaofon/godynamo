@@ -150,6 +150,8 @@ func TestPlanForIndexForcesGSI(t *testing.T) {
 	if p.Values[":pkval"] != "u1" {
 		t.Fatalf("values=%v", p.Values)
 	}
+	// BuildExpression numbers placeholders from #attr0/:val0 for the conds it
+	// receives, so the lone remaining "status" condition is #attr0 here.
 	if p.FilterExpression != "#attr0 = :val0" {
 		t.Fatalf("filter=%q", p.FilterExpression)
 	}
@@ -199,5 +201,12 @@ func TestPlanForIndexErrorsOnUnknownIndex(t *testing.T) {
 	conds := []Condition{{Name: "id", Operator: OpEquals, Value: "1"}}
 	if _, err := PlanForIndex(info, conds, "nope"); err == nil {
 		t.Fatal("want error on unknown index")
+	}
+}
+
+func TestPlanForIndexNilInfo(t *testing.T) {
+	conds := []Condition{{Name: "id", Operator: OpEquals, Value: "1"}}
+	if _, err := PlanForIndex(nil, conds, ""); err == nil {
+		t.Fatal("want error when table schema is nil")
 	}
 }
