@@ -56,6 +56,16 @@ function syncToolbar() {
   $('more-btn').disabled = !(state && state.cursor)
 }
 
+let ctxTable = null
+
+function showContextMenu(x, y, name) {
+  ctxTable = name
+  const menu = $('ctx-menu')
+  menu.style.left = x + 'px'
+  menu.style.top = y + 'px'
+  show(menu)
+}
+
 function hideContextMenu() { hide($('ctx-menu')) }
 
 function renderTabs() {
@@ -228,6 +238,10 @@ function renderTableList() {
       li.textContent = t
       li.className = (t === activeName ? 'active' : '') + (openNames.has(t) ? ' open' : '')
       li.addEventListener('click', () => openTable(t))
+      li.addEventListener('contextmenu', (e) => {
+        e.preventDefault()
+        showContextMenu(e.clientX, e.clientY, t)
+      })
       ul.appendChild(li)
     })
 }
@@ -819,4 +833,13 @@ window.addEventListener('DOMContentLoaded', () => {
   $('ct-create').addEventListener('click', submitCreateTable)
   $('confirm-no').addEventListener('click', () => hide($('confirm')))
   $('confirm-yes').addEventListener('click', doDelete)
+  $('ctx-open-new').addEventListener('click', () => {
+    if (ctxTable) openTable(ctxTable, { forceNew: true })
+    hideContextMenu()
+  })
+  document.addEventListener('click', (e) => {
+    if (!$('ctx-menu').contains(e.target)) hideContextMenu()
+  })
+  document.addEventListener('scroll', hideContextMenu, true)
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideContextMenu() })
 })
