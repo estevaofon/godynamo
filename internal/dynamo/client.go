@@ -54,7 +54,7 @@ type RegionInfo struct {
 }
 
 // DiscoverRegionsWithTables scans all regions and returns those with DynamoDB tables
-func DiscoverRegionsWithTables(ctx context.Context, useLocal bool, endpoint string) ([]RegionInfo, error) {
+func DiscoverRegionsWithTables(ctx context.Context, profile string, useLocal bool, endpoint string) ([]RegionInfo, error) {
 	if useLocal {
 		// For local DynamoDB, just return a single "local" region
 		cfg, err := config.LoadDefaultConfig(ctx,
@@ -107,7 +107,11 @@ func DiscoverRegionsWithTables(ctx context.Context, useLocal bool, endpoint stri
 			regionCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 			defer cancel()
 
-			cfg, err := config.LoadDefaultConfig(regionCtx, config.WithRegion(r))
+			loadOpts := []func(*config.LoadOptions) error{config.WithRegion(r)}
+			if profile != "" {
+				loadOpts = append(loadOpts, config.WithSharedConfigProfile(profile))
+			}
+			cfg, err := config.LoadDefaultConfig(regionCtx, loadOpts...)
 			if err != nil {
 				return
 			}
@@ -153,6 +157,7 @@ type ConnectionConfig struct {
 	AccessKey string
 	SecretKey string
 	UseLocal  bool
+	Profile   string
 }
 
 // NewClient creates a new DynamoDB client
@@ -160,6 +165,10 @@ func NewClient(cfg ConnectionConfig) (*Client, error) {
 	var opts []func(*config.LoadOptions) error
 
 	opts = append(opts, config.WithRegion(cfg.Region))
+
+	if cfg.Profile != "" {
+		opts = append(opts, config.WithSharedConfigProfile(cfg.Profile))
+	}
 
 	if cfg.UseLocal {
 		opts = append(opts, config.WithCredentialsProvider(

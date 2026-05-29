@@ -260,7 +260,7 @@ func (m Model) Init() tea.Cmd {
 
 func (m *Model) discoverRegions() tea.Cmd {
 	return func() tea.Msg {
-		regions, err := dynamo.DiscoverRegionsWithTables(context.Background(), false, "")
+		regions, err := dynamo.DiscoverRegionsWithTables(context.Background(), "", false, "")
 		if err != nil {
 			return errMsg{err}
 		}
