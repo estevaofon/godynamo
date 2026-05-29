@@ -109,8 +109,12 @@ function activate(id) {
   renderGrid()
   $('grid-wrap').scrollTop = state.scrollTop
   syncToolbar()
-  if (state.loaded) updateStatus()
-  else $('status').textContent = state.status || 'Loading…'
+  if (state.loaded) {
+    updateStatus()
+  } else {
+    $('mode-badge').textContent = ''
+    $('status').textContent = state.status || 'Loading…'
+  }
 }
 
 async function loadTab(tab) {
@@ -138,7 +142,7 @@ function closeTab(id) {
   if (conn.activeId === id) {
     const next = conn.tabs[i] || conn.tabs[i - 1]
     if (next) { activate(next.id) }
-    else { conn.activeId = null; state = null; showEmptyState(); renderTabs(); renderTableList() }
+    else { conn.activeId = null; state = null; hide($('detail')); hide($('editor')); showEmptyState(); renderTabs(); renderTableList() }
   } else {
     renderTabs()
     renderTableList()
