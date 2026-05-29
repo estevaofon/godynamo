@@ -127,9 +127,12 @@ function pageSize() {
   return parseInt($('page-size').value, 10) || 500
 }
 
+// Operators that require a value; exists/not_exists do not.
+const VALUE_OPS = new Set(['eq', 'ne', 'gt', 'lt', 'ge', 'le', 'contains', 'not_contains', 'begins_with'])
+
 function activeConditions() {
   return state.conditions
-    .filter((c) => c.name.trim() !== '')
+    .filter((c) => c.name.trim() !== '' && (!VALUE_OPS.has(c.op) || c.value.trim() !== ''))
     .map((c) => ({ name: c.name, op: c.op, value: c.value }))
 }
 
@@ -144,15 +147,20 @@ async function loadPage(reset) {
         cursor,
       })
       state.mode = data.mode || ''
-      state.scanned = data.scannedCount || 0
     } else {
       data = await window.api.scan(state.currentTable, cursor, pageSize())
       state.mode = ''
+    }
+    if (reset) {
+      state.items = []
       state.scanned = 0
     }
-    if (reset) state.items = []
     state.items = state.items.concat(data.items || [])
     state.cursor = data.cursor || ''
+    // scanned accumulates across Resume-fetching pages (matches the DynamoDB console).
+    if (state.filterActive) {
+      state.scanned += data.scannedCount || 0
+    }
     $('more-btn').disabled = !state.cursor
     updateStatus()
     renderGrid()
