@@ -15,6 +15,10 @@ var profileSectionRe = regexp.MustCompile(`^\s*\[([^\]]+)\]\s*$`)
 // ListProfilesFromReader parses INI section headers from r as profile names.
 // It returns the names in file order plus the default profile name
 // ("default" when a [default] section exists, else "").
+//
+// Best-effort: a scanner error mid-read yields a possibly-truncated list and no
+// error. A local ~/.aws/credentials file is small and rarely unreadable
+// mid-parse, so the simpler error-free signature is intentional.
 func ListProfilesFromReader(r io.Reader) (names []string, def string) {
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
