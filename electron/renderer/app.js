@@ -20,6 +20,8 @@ const OPERATORS = [
   { op: 'not_exists', label: '∄ Not Exists' },
 ]
 
+const VALUE_OPS = new Set(['eq', 'ne', 'gt', 'lt', 'ge', 'le', 'contains', 'not_contains', 'begins_with'])
+
 const state = {
   tables: [],
   currentTable: null,
@@ -31,6 +33,7 @@ const state = {
   filterActive: false,
   mode: '',
   scanned: 0,
+  selectedIdx: -1,
 }
 
 const $ = (id) => document.getElementById(id)
@@ -91,6 +94,12 @@ function renderTableList() {
     })
 }
 
+async function refreshTables() {
+  const data = await window.api.listTables()
+  state.tables = data.tables || []
+  renderTableList()
+}
+
 async function selectTable(name) {
   state.currentTable = name
   state.cursor = ''
@@ -99,11 +108,13 @@ async function selectTable(name) {
   state.filterActive = false
   state.mode = ''
   state.scanned = 0
+  state.selectedIdx = -1
   $('current-table').textContent = name
   $('status').textContent = 'Loading…'
   $('mode-badge').textContent = ''
   $('schema-btn').disabled = true
   $('filter-btn').disabled = true
+  $('new-item-btn').disabled = true
   $('more-btn').disabled = true
   hide($('filter-panel'))
   renderFilterRows()
@@ -117,6 +128,7 @@ async function selectTable(name) {
     state.schemaRaw = schema.rawJSON || JSON.stringify(schema.info, null, 2)
     $('schema-btn').disabled = false
     $('filter-btn').disabled = false
+    $('new-item-btn').disabled = false
     await loadPage(true)
   } catch (err) {
     $('status').textContent = 'Error: ' + err.message
@@ -126,9 +138,6 @@ async function selectTable(name) {
 function pageSize() {
   return parseInt($('page-size').value, 10) || 500
 }
-
-// Operators that require a value; exists/not_exists do not.
-const VALUE_OPS = new Set(['eq', 'ne', 'gt', 'lt', 'ge', 'le', 'contains', 'not_contains', 'begins_with'])
 
 function activeConditions() {
   return state.conditions
@@ -157,7 +166,6 @@ async function loadPage(reset) {
     }
     state.items = state.items.concat(data.items || [])
     state.cursor = data.cursor || ''
-    // scanned accumulates across Resume-fetching pages (matches the DynamoDB console).
     if (state.filterActive) {
       state.scanned += data.scannedCount || 0
     }
@@ -303,15 +311,117 @@ function renderGrid() {
 }
 
 function showItem(idx) {
+  state.selectedIdx = idx
   $('detail-title').textContent = 'Item'
   $('detail-body').textContent = JSON.stringify(state.items[idx], null, 2)
+  show($('detail-edit'))
+  show($('detail-delete'))
   show($('detail'))
 }
 
 function showSchema() {
   $('detail-title').textContent = 'Schema: ' + state.currentTable
   $('detail-body').textContent = state.schemaRaw || ''
+  hide($('detail-edit'))
+  hide($('detail-delete'))
   show($('detail'))
+}
+
+function openNewItem() {
+  $('editor-title').textContent = 'New item'
+  $('editor-text').value = '{\n  \n}'
+  $('editor-error').textContent = ''
+  show($('editor'))
+}
+
+function openEditItem() {
+  if (state.selectedIdx < 0) return
+  $('editor-title').textContent = 'Edit item'
+  $('editor-text').value = JSON.stringify(state.items[state.selectedIdx], null, 2)
+  $('editor-error').textContent = ''
+  hide($('detail'))
+  show($('editor'))
+}
+
+async function saveEditor() {
+  const text = $('editor-text').value
+  try {
+    JSON.parse(text)
+  } catch (e) {
+    $('editor-error').textContent = 'Invalid JSON: ' + e.message
+    return
+  }
+  $('editor-error').textContent = ''
+  $('editor-save').disabled = true
+  try {
+    await window.api.saveItem(state.currentTable, text)
+    hide($('editor'))
+    await loadPage(true)
+  } catch (err) {
+    $('editor-error').textContent = err.message
+  } finally {
+    $('editor-save').disabled = false
+  }
+}
+
+function confirmDelete() {
+  if (state.selectedIdx < 0) return
+  $('confirm-text').textContent = 'Delete this item? This cannot be undone.'
+  show($('confirm'))
+}
+
+async function doDelete() {
+  hide($('confirm'))
+  if (state.selectedIdx < 0) return
+  const json = JSON.stringify(state.items[state.selectedIdx])
+  try {
+    await window.api.deleteItem(state.currentTable, json)
+    hide($('detail'))
+    await loadPage(true)
+  } catch (err) {
+    $('status').textContent = 'Error: ' + err.message
+  }
+}
+
+function openCreateTable() {
+  $('ct-name').value = ''
+  $('ct-pk').value = ''
+  $('ct-pktype').value = 'S'
+  $('ct-sk').value = ''
+  $('ct-sktype').value = 'S'
+  $('ct-billing').value = 'PAY_PER_REQUEST'
+  $('ct-rcu').value = '5'
+  $('ct-wcu').value = '5'
+  $('ct-error').textContent = ''
+  show($('createtable'))
+}
+
+async function submitCreateTable() {
+  const form = {
+    name: $('ct-name').value.trim(),
+    pk: $('ct-pk').value.trim(),
+    pkType: $('ct-pktype').value,
+    sk: $('ct-sk').value.trim(),
+    skType: $('ct-sktype').value,
+    billingMode: $('ct-billing').value,
+    rcu: parseInt($('ct-rcu').value, 10) || 0,
+    wcu: parseInt($('ct-wcu').value, 10) || 0,
+  }
+  if (!form.name || !form.pk) {
+    $('ct-error').textContent = 'Table name and partition key are required.'
+    return
+  }
+  $('ct-error').textContent = ''
+  $('ct-create').disabled = true
+  try {
+    await window.api.createTable(form)
+    hide($('createtable'))
+    await refreshTables()
+  } catch (err) {
+    $('ct-error').textContent = err.message
+  } finally {
+    $('ct-create').disabled = false
+  }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -325,4 +435,14 @@ window.addEventListener('DOMContentLoaded', () => {
   $('more-btn').addEventListener('click', () => loadPage(false))
   $('page-size').addEventListener('change', () => { if (state.currentTable) loadPage(true) })
   $('detail-close').addEventListener('click', () => hide($('detail')))
+  $('new-item-btn').addEventListener('click', openNewItem)
+  $('create-table-btn').addEventListener('click', openCreateTable)
+  $('detail-edit').addEventListener('click', openEditItem)
+  $('detail-delete').addEventListener('click', confirmDelete)
+  $('editor-close').addEventListener('click', () => hide($('editor')))
+  $('editor-save').addEventListener('click', saveEditor)
+  $('ct-close').addEventListener('click', () => hide($('createtable')))
+  $('ct-create').addEventListener('click', submitCreateTable)
+  $('confirm-no').addEventListener('click', () => hide($('confirm')))
+  $('confirm-yes').addEventListener('click', doDelete)
 })

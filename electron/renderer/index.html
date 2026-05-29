@@ -30,12 +30,14 @@
 
   <section id="main-screen" class="screen hidden">
     <aside id="sidebar">
+      <button id="create-table-btn">+ New table</button>
       <input type="text" id="table-filter" placeholder="Filter tables…" />
       <ul id="table-list"></ul>
     </aside>
     <main id="content">
       <header id="toolbar">
         <span id="current-table"></span>
+        <button id="new-item-btn" disabled>New item</button>
         <button id="filter-btn" disabled>Filter</button>
         <button id="schema-btn" disabled>Schema</button>
         <label id="pagesize-label">Page size
@@ -69,9 +71,64 @@
     <div class="detail-card">
       <header>
         <span id="detail-title"></span>
+        <button id="detail-edit" class="hidden">Edit</button>
+        <button id="detail-delete" class="hidden">Delete</button>
         <button id="detail-close">✕</button>
       </header>
       <pre id="detail-body"></pre>
+    </div>
+  </div>
+
+  <div id="editor" class="hidden">
+    <div class="modal-card">
+      <header>
+        <span id="editor-title"></span>
+        <button id="editor-close">✕</button>
+      </header>
+      <textarea id="editor-text" spellcheck="false"></textarea>
+      <p id="editor-error" class="error"></p>
+      <div class="modal-actions">
+        <button id="editor-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="createtable" class="hidden">
+    <div class="modal-card">
+      <header>
+        <span>Create table</span>
+        <button id="ct-close">✕</button>
+      </header>
+      <div class="ct-form">
+        <label>Table name <input type="text" id="ct-name" /></label>
+        <label>Partition key <input type="text" id="ct-pk" /></label>
+        <label>Partition key type
+          <select id="ct-pktype"><option>S</option><option>N</option><option>B</option></select>
+        </label>
+        <label>Sort key (optional) <input type="text" id="ct-sk" /></label>
+        <label>Sort key type
+          <select id="ct-sktype"><option>S</option><option>N</option><option>B</option></select>
+        </label>
+        <label>Billing mode
+          <select id="ct-billing"><option>PAY_PER_REQUEST</option><option>PROVISIONED</option></select>
+        </label>
+        <label>Read capacity <input type="number" id="ct-rcu" value="5" /></label>
+        <label>Write capacity <input type="number" id="ct-wcu" value="5" /></label>
+      </div>
+      <p id="ct-error" class="error"></p>
+      <div class="modal-actions">
+        <button id="ct-create">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirm" class="hidden">
+    <div class="modal-card small">
+      <p id="confirm-text"></p>
+      <div class="modal-actions">
+        <button id="confirm-no">Cancel</button>
+        <button id="confirm-yes">Delete</button>
+      </div>
     </div>
   </div>
 

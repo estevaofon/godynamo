@@ -40,4 +40,7 @@ contextBridge.exposeInMainWorld('api', {
     return call('GET', `/tables/${encodeURIComponent(name)}/scan${qs ? '?' + qs : ''}`)
   },
   query: (name, body) => call('POST', `/tables/${encodeURIComponent(name)}/query`, body),
+  saveItem: (name, json) => call('POST', `/tables/${encodeURIComponent(name)}/item`, { json }),
+  deleteItem: (name, json) => call('DELETE', `/tables/${encodeURIComponent(name)}/item`, { json }),
+  createTable: (form) => call('POST', '/tables', form),
 })

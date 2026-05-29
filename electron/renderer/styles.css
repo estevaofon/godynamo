@@ -50,3 +50,18 @@ table#grid { border-collapse: collapse; width: 100%; font-size: 12px; }
 .filter-row select { min-width: 160px; }
 .filter-remove { padding: 4px 8px; }
 #filter-actions { margin-top: 8px; display: flex; gap: 8px; }
+#create-table-btn { width: 100%; margin-bottom: 8px; }
+#editor, #createtable, #confirm { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; }
+.modal-card { background: #131a2b; border: 1px solid #2a3450; border-radius: 8px; width: 60%; max-width: 720px; max-height: 85%; display: flex; flex-direction: column; }
+.modal-card.small { width: 360px; max-width: 360px; padding: 20px; }
+.modal-card header { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #2a3450; }
+.modal-card header span { font-weight: bold; }
+.modal-card header button { margin-left: auto; }
+#editor-text { min-height: 320px; margin: 12px; background: #0b0f1a; color: #c8d3f5; border: 1px solid #2a3450; border-radius: 6px; padding: 8px; font-family: 'Cascadia Code', monospace; font-size: 12px; resize: vertical; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; padding: 12px; }
+.ct-form { display: flex; flex-direction: column; gap: 8px; padding: 16px; overflow-y: auto; }
+.ct-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+#editor .error, #createtable .error { padding: 0 12px; }
+.detail-card header { gap: 8px; }
+#detail-title { margin-right: auto; }
+.detail-card header button { margin-left: 0; }
