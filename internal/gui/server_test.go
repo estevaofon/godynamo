@@ -61,7 +61,8 @@ func (f *fakeBackend) CreateTable(ctx context.Context, input dynamo.CreateTableI
 
 func newTestServer(b Backend) *server {
 	s := newServer("test-token")
-	s.setBackend(b)
+	s.activeProfile = "test"
+	s.connectFn = func(profile, region string) (Backend, error) { return b, nil }
 	return s
 }
 
@@ -80,7 +81,7 @@ func do(s *server, method, target string, body string) *httptest.ResponseRecorde
 
 func TestRequiresToken(t *testing.T) {
 	s := newTestServer(&fakeBackend{tables: []string{"a"}})
-	r := httptest.NewRequest(http.MethodGet, "/tables", nil) // no Authorization header
+	r := httptest.NewRequest(http.MethodGet, "/profiles", nil) // no Authorization header
 	rec := httptest.NewRecorder()
 	s.handler().ServeHTTP(rec, r)
 	if rec.Code != http.StatusUnauthorized {
@@ -90,7 +91,7 @@ func TestRequiresToken(t *testing.T) {
 
 func TestCORSPreflight(t *testing.T) {
 	s := newServer("test-token")
-	r := httptest.NewRequest(http.MethodOptions, "/connect", nil)
+	r := httptest.NewRequest(http.MethodOptions, "/discover", nil)
 	rec := httptest.NewRecorder()
 	s.handler().ServeHTTP(rec, r)
 	if rec.Code != http.StatusNoContent {
@@ -104,57 +105,11 @@ func TestCORSPreflight(t *testing.T) {
 	}
 }
 
-func TestListTablesSorted(t *testing.T) {
-	s := newTestServer(&fakeBackend{tables: []string{"b", "a"}})
-	rec := do(s, http.MethodGet, "/tables", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var resp struct {
-		Tables []string `json:"tables"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if len(resp.Tables) != 2 || resp.Tables[0] != "a" || resp.Tables[1] != "b" {
-		t.Fatalf("want [a b], got %v", resp.Tables)
-	}
-}
-
-func TestConnectStoresBackend(t *testing.T) {
-	s := newServer("test-token")
-	s.connectFn = func(req connectRequest) (Backend, error) {
-		return &fakeBackend{tables: []string{"t2", "t1"}}, nil
-	}
-	rec := do(s, http.MethodPost, "/connect", `{"mode":"local","endpoint":"http://localhost:8000"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var resp struct {
-		Tables []string `json:"tables"`
-	}
-	json.Unmarshal(rec.Body.Bytes(), &resp)
-	if len(resp.Tables) != 2 || resp.Tables[0] != "t1" {
-		t.Fatalf("want sorted tables, got %v", resp.Tables)
-	}
-	if _, ok := s.getBackend(); !ok {
-		t.Fatal("backend not stored after connect")
-	}
-}
-
-func TestConnectValidatesMode(t *testing.T) {
-	s := newServer("test-token")
-	rec := do(s, http.MethodPost, "/connect", `{"mode":"bogus"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("want 400, got %d", rec.Code)
-	}
-}
-
 func TestSchemaHandler(t *testing.T) {
 	s := newTestServer(&fakeBackend{info: &dynamo.TableInfo{
 		Name: "mytable", PartitionKey: "id", SortKey: "sk", RawJSON: `{"TableName":"mytable"}`,
 	}})
-	rec := do(s, http.MethodGet, "/tables/mytable/schema", "")
+	rec := do(s, http.MethodGet, "/tables/mytable/schema?region=us-east-1", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", rec.Code)
 	}
@@ -186,7 +141,7 @@ func TestScanHandlerConvertsItemsAndCursor(t *testing.T) {
 			},
 		},
 	})
-	rec := do(s, http.MethodGet, "/tables/mytable/scan?limit=10", "")
+	rec := do(s, http.MethodGet, "/tables/mytable/scan?limit=10&region=us-east-1", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -212,17 +167,17 @@ func TestScanHandlerConvertsItemsAndCursor(t *testing.T) {
 	}
 }
 
-func TestScanNotConnected(t *testing.T) {
-	s := newServer("test-token") // no backend set
-	rec := do(s, http.MethodGet, "/tables/x/scan", "")
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("want 409, got %d", rec.Code)
+func TestScanMissingRegion(t *testing.T) {
+	s := newTestServer(&fakeBackend{})
+	rec := do(s, http.MethodGet, "/tables/x/scan", "") // no region param
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
 	}
 }
 
 func TestScanBackendError(t *testing.T) {
 	s := newTestServer(&fakeBackend{scanErr: errors.New("dynamo timeout")})
-	rec := do(s, http.MethodGet, "/tables/x/scan", "")
+	rec := do(s, http.MethodGet, "/tables/x/scan?region=us-east-1", "")
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("want 502, got %d", rec.Code)
 	}
@@ -236,7 +191,7 @@ func TestQueryModeForPartitionKeyEquals(t *testing.T) {
 			Count: 1,
 		},
 	})
-	rec := do(s, http.MethodPost, "/tables/t/query", `{"conditions":[{"name":"id","op":"eq","value":"1"}],"limit":10}`)
+	rec := do(s, http.MethodPost, "/tables/t/query?region=us-east-1", `{"conditions":[{"name":"id","op":"eq","value":"1"}],"limit":10}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -261,7 +216,7 @@ func TestQueryFallsBackToScanForNonKey(t *testing.T) {
 			Count: 1,
 		},
 	})
-	rec := do(s, http.MethodPost, "/tables/t/query", `{"conditions":[{"name":"status","op":"eq","value":"active"}]}`)
+	rec := do(s, http.MethodPost, "/tables/t/query?region=us-east-1", `{"conditions":[{"name":"status","op":"eq","value":"active"}]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -276,23 +231,23 @@ func TestQueryFallsBackToScanForNonKey(t *testing.T) {
 
 func TestQueryUnknownOperator(t *testing.T) {
 	s := newTestServer(&fakeBackend{info: &dynamo.TableInfo{PartitionKey: "id"}})
-	rec := do(s, http.MethodPost, "/tables/t/query", `{"conditions":[{"name":"id","op":"bogus","value":"1"}]}`)
+	rec := do(s, http.MethodPost, "/tables/t/query?region=us-east-1", `{"conditions":[{"name":"id","op":"bogus","value":"1"}]}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d", rec.Code)
 	}
 }
 
-func TestQueryNotConnected(t *testing.T) {
-	s := newServer("test-token")
+func TestQueryMissingRegion(t *testing.T) {
+	s := newTestServer(&fakeBackend{info: &dynamo.TableInfo{PartitionKey: "id"}})
 	rec := do(s, http.MethodPost, "/tables/t/query", `{"conditions":[]}`)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("want 409, got %d", rec.Code)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
 	}
 }
 
 func TestQueryNoEffectiveFilter(t *testing.T) {
 	s := newTestServer(&fakeBackend{info: &dynamo.TableInfo{PartitionKey: "id"}})
-	rec := do(s, http.MethodPost, "/tables/t/query", `{"conditions":[]}`)
+	rec := do(s, http.MethodPost, "/tables/t/query?region=us-east-1", `{"conditions":[]}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -301,7 +256,7 @@ func TestQueryNoEffectiveFilter(t *testing.T) {
 func TestPutItem(t *testing.T) {
 	f := &fakeBackend{}
 	s := newTestServer(f)
-	rec := do(s, http.MethodPost, "/tables/t/item", `{"json":"{\"id\":\"1\",\"name\":\"Alice\"}"}`)
+	rec := do(s, http.MethodPost, "/tables/t/item?region=us-east-1", `{"json":"{\"id\":\"1\",\"name\":\"Alice\"}"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -312,7 +267,7 @@ func TestPutItem(t *testing.T) {
 
 func TestPutItemInvalidJSON(t *testing.T) {
 	s := newTestServer(&fakeBackend{})
-	rec := do(s, http.MethodPost, "/tables/t/item", `{"json":"not json"}`)
+	rec := do(s, http.MethodPost, "/tables/t/item?region=us-east-1", `{"json":"not json"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d", rec.Code)
 	}
@@ -321,7 +276,7 @@ func TestPutItemInvalidJSON(t *testing.T) {
 func TestDeleteItemDerivesKey(t *testing.T) {
 	f := &fakeBackend{info: &dynamo.TableInfo{PartitionKey: "id", SortKey: "sk"}}
 	s := newTestServer(f)
-	rec := do(s, http.MethodDelete, "/tables/t/item", `{"json":"{\"id\":\"1\",\"sk\":\"a\",\"extra\":\"x\"}"}`)
+	rec := do(s, http.MethodDelete, "/tables/t/item?region=us-east-1", `{"json":"{\"id\":\"1\",\"sk\":\"a\",\"extra\":\"x\"}"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -336,7 +291,7 @@ func TestDeleteItemDerivesKey(t *testing.T) {
 func TestDeleteItemMissingKey(t *testing.T) {
 	f := &fakeBackend{info: &dynamo.TableInfo{PartitionKey: "id"}}
 	s := newTestServer(f)
-	rec := do(s, http.MethodDelete, "/tables/t/item", `{"json":"{\"other\":\"x\"}"}`)
+	rec := do(s, http.MethodDelete, "/tables/t/item?region=us-east-1", `{"json":"{\"other\":\"x\"}"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d", rec.Code)
 	}
@@ -345,7 +300,7 @@ func TestDeleteItemMissingKey(t *testing.T) {
 func TestCreateTable(t *testing.T) {
 	f := &fakeBackend{}
 	s := newTestServer(f)
-	rec := do(s, http.MethodPost, "/tables", `{"name":"NewT","pk":"id","pkType":"S","billingMode":"PAY_PER_REQUEST"}`)
+	rec := do(s, http.MethodPost, "/tables?region=us-east-1", `{"name":"NewT","pk":"id","pkType":"S","billingMode":"PAY_PER_REQUEST"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -356,23 +311,23 @@ func TestCreateTable(t *testing.T) {
 
 func TestCreateTableValidates(t *testing.T) {
 	s := newTestServer(&fakeBackend{})
-	rec := do(s, http.MethodPost, "/tables", `{"pk":"id"}`)
+	rec := do(s, http.MethodPost, "/tables?region=us-east-1", `{"pk":"id"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d", rec.Code)
 	}
 }
 
-func TestWriteNotConnected(t *testing.T) {
-	s := newServer("test-token")
+func TestPutItemMissingRegion(t *testing.T) {
+	s := newTestServer(&fakeBackend{})
 	rec := do(s, http.MethodPost, "/tables/t/item", `{"json":"{}"}`)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("want 409, got %d", rec.Code)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
 	}
 }
 
 func TestCreateTableRequiresPKType(t *testing.T) {
 	s := newTestServer(&fakeBackend{})
-	rec := do(s, http.MethodPost, "/tables", `{"name":"T","pk":"id"}`)
+	rec := do(s, http.MethodPost, "/tables?region=us-east-1", `{"name":"T","pk":"id"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d", rec.Code)
 	}
@@ -387,7 +342,7 @@ func TestQueryForceScanIgnoresIndexableEquality(t *testing.T) {
 		},
 	})
 	// id = 1 would normally Query the table; strategy:scan must force a Scan.
-	rec := do(s, http.MethodPost, "/tables/t/query",
+	rec := do(s, http.MethodPost, "/tables/t/query?region=us-east-1",
 		`{"conditions":[{"name":"id","op":"eq","value":"1"}],"strategy":{"mode":"scan"}}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
@@ -416,7 +371,7 @@ func TestQueryForceIndexUsesGSI(t *testing.T) {
 			Count: 1,
 		},
 	})
-	rec := do(s, http.MethodPost, "/tables/t/query",
+	rec := do(s, http.MethodPost, "/tables/t/query?region=us-east-1",
 		`{"conditions":[{"name":"email","op":"eq","value":"a@b.com"}],"strategy":{"mode":"query","index":"by-email"}}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
@@ -442,7 +397,7 @@ func TestQueryForceIndexWithoutEqualityIs400(t *testing.T) {
 		},
 	})
 	// begins_with on email is not an equality, so forcing the index must 400.
-	rec := do(s, http.MethodPost, "/tables/t/query",
+	rec := do(s, http.MethodPost, "/tables/t/query?region=us-east-1",
 		`{"conditions":[{"name":"email","op":"begins_with","value":"a"}],"strategy":{"mode":"query","index":"by-email"}}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d (%s)", rec.Code, rec.Body.String())
@@ -461,7 +416,7 @@ func TestQueryAutoReturnsIndexName(t *testing.T) {
 		},
 	})
 	// No strategy -> auto; the planner picks the GSI; the response must report it.
-	rec := do(s, http.MethodPost, "/tables/t/query",
+	rec := do(s, http.MethodPost, "/tables/t/query?region=us-east-1",
 		`{"conditions":[{"name":"email","op":"eq","value":"a@b.com"}]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
@@ -473,5 +428,91 @@ func TestQueryAutoReturnsIndexName(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &resp)
 	if resp.Mode != "query" || resp.Index != "by-email" {
 		t.Fatalf("want query/by-email, got %q/%q", resp.Mode, resp.Index)
+	}
+}
+
+func TestProfilesHandler(t *testing.T) {
+	s := newServer("test-token")
+	s.profilesFn = func() ([]string, string, error) {
+		return []string{"default", "work"}, "default", nil
+	}
+	rec := do(s, http.MethodGet, "/profiles", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Profiles []string `json:"profiles"`
+		Default  string   `json:"default"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Default != "default" || len(resp.Profiles) != 2 || resp.Profiles[0] != "default" {
+		t.Fatalf("got %+v", resp)
+	}
+}
+
+func TestDiscoverReturnsRegionsAndResetsCache(t *testing.T) {
+	s := newServer("test-token")
+	s.discoverFn = func(ctx context.Context, profile string) ([]string, error) {
+		return []string{"sa-east-1", "us-east-1"}, nil
+	}
+	s.connectFn = func(profile, region string) (Backend, error) {
+		return &fakeBackend{tables: []string{region + "-tableB", region + "-tableA"}}, nil
+	}
+	rec := do(s, http.MethodPost, "/discover", `{"profile":"work"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Profile string `json:"profile"`
+		Regions []struct {
+			Region string   `json:"region"`
+			Tables []string `json:"tables"`
+		} `json:"regions"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Profile != "work" {
+		t.Fatalf("want profile work, got %q", resp.Profile)
+	}
+	if len(resp.Regions) != 2 || resp.Regions[0].Region != "sa-east-1" {
+		t.Fatalf("regions not sorted/returned: %+v", resp.Regions)
+	}
+	// tables sorted within a region
+	if resp.Regions[0].Tables[0] != "sa-east-1-tableA" {
+		t.Fatalf("tables not sorted: %+v", resp.Regions[0].Tables)
+	}
+	if s.activeProfile != "work" {
+		t.Fatalf("active profile not set: %q", s.activeProfile)
+	}
+}
+
+func TestRegionRoutingCachesPerRegion(t *testing.T) {
+	calls := map[string]int{}
+	s := newServer("test-token")
+	s.activeProfile = "work"
+	s.connectFn = func(profile, region string) (Backend, error) {
+		calls[region]++
+		return &fakeBackend{scan: &dynamo.ScanResult{
+			Items: []map[string]types.AttributeValue{
+				{"r": &types.AttributeValueMemberS{Value: region}},
+			},
+			Count: 1,
+		}}, nil
+	}
+	// First scan in sa-east-1 builds + caches that client.
+	rec := do(s, http.MethodGet, "/tables/t/scan?region=sa-east-1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Items) != 1 || resp.Items[0]["r"] != "sa-east-1" {
+		t.Fatalf("routed to wrong region: %+v", resp.Items)
+	}
+	// Second scan in the same region reuses the cached client.
+	_ = do(s, http.MethodGet, "/tables/t/scan?region=sa-east-1", "")
+	if calls["sa-east-1"] != 1 {
+		t.Fatalf("want connectFn called once for sa-east-1, got %d", calls["sa-east-1"])
 	}
 }

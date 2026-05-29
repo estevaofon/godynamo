@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
@@ -15,53 +16,63 @@ import (
 	"github.com/godynamo/internal/query"
 )
 
-type connectRequest struct {
-	Mode     string `json:"mode"` // "aws" or "local"
-	Region   string `json:"region"`
-	Endpoint string `json:"endpoint"`
-}
-
 type errorResponse struct {
 	Error string `json:"error"`
 }
 
+// RegionTables is one region's full table list, returned by /discover.
+type RegionTables struct {
+	Region string   `json:"region"`
+	Tables []string `json:"tables"`
+}
+
 type server struct {
-	token     string
-	mu        sync.RWMutex
-	backend   Backend // nil until /connect succeeds
-	connectFn func(req connectRequest) (Backend, error)
-	h         http.Handler
+	token         string
+	mu            sync.RWMutex
+	activeProfile string
+	clients       map[string]Backend // key: region (for the active profile)
+	connectFn     func(profile, region string) (Backend, error)
+	discoverFn    func(ctx context.Context, profile string) ([]string, error)
+	profilesFn    func() (names []string, def string, err error)
+	h             http.Handler
 }
 
 func newServer(token string) *server {
-	s := &server{token: token, connectFn: defaultConnect}
+	s := &server{
+		token:      token,
+		clients:    map[string]Backend{},
+		connectFn:  defaultConnectFn,
+		discoverFn: defaultDiscoverFn,
+		profilesFn: dynamo.ListProfiles,
+	}
 	s.h = s.buildHandler()
 	return s
 }
 
-// defaultConnect builds a real *dynamo.Client from the request.
-func defaultConnect(req connectRequest) (Backend, error) {
-	cfg := dynamo.ConnectionConfig{
-		Region:   req.Region,
-		Endpoint: req.Endpoint,
-		UseLocal: req.Mode == "local",
+// defaultConnectFn builds a real *dynamo.Client for one profile+region.
+func defaultConnectFn(profile, region string) (Backend, error) {
+	return dynamo.NewClient(dynamo.ConnectionConfig{Region: region, Profile: profile})
+}
+
+// defaultDiscoverFn returns the region names that have tables for the profile.
+func defaultDiscoverFn(ctx context.Context, profile string) ([]string, error) {
+	infos, err := dynamo.DiscoverRegionsWithTables(ctx, profile, false, "")
+	if err != nil {
+		return nil, err
 	}
-	if req.Mode == "local" {
-		if cfg.Region == "" {
-			cfg.Region = "us-east-1"
-		}
-		cfg.AccessKey = "local"
-		cfg.SecretKey = "local"
+	regions := make([]string, 0, len(infos))
+	for _, ri := range infos {
+		regions = append(regions, ri.Region)
 	}
-	return dynamo.NewClient(cfg)
+	return regions, nil
 }
 
 func (s *server) handler() http.Handler { return s.h }
 
 func (s *server) buildHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /connect", s.handleConnect)
-	mux.HandleFunc("GET /tables", s.handleListTables)
+	mux.HandleFunc("GET /profiles", s.handleProfiles)
+	mux.HandleFunc("POST /discover", s.handleDiscover)
 	mux.HandleFunc("GET /tables/{name}/schema", s.handleSchema)
 	mux.HandleFunc("GET /tables/{name}/scan", s.handleScan)
 	mux.HandleFunc("POST /tables/{name}/query", s.handleQuery)
@@ -97,78 +108,83 @@ func (s *server) authorized(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(h[len(prefix):]), []byte(s.token)) == 1
 }
 
-func (s *server) getBackend() (Backend, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.backend, s.backend != nil
-}
-
-func (s *server) setBackend(b Backend) {
+func (s *server) backendFor(region string) (Backend, error) {
 	s.mu.Lock()
-	s.backend = b
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	if b, ok := s.clients[region]; ok {
+		return b, nil
+	}
+	b, err := s.connectFn(s.activeProfile, region)
+	if err != nil {
+		return nil, err
+	}
+	s.clients[region] = b
+	return b, nil
 }
 
-func (s *server) handleConnect(w http.ResponseWriter, r *http.Request) {
-	var req connectRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	switch req.Mode {
-	case "aws":
-		if req.Region == "" {
-			writeError(w, http.StatusBadRequest, "region is required for aws mode")
-			return
-		}
-	case "local":
-		if req.Endpoint == "" {
-			writeError(w, http.StatusBadRequest, "endpoint is required for local mode")
-			return
-		}
-	default:
-		writeError(w, http.StatusBadRequest, `mode must be "aws" or "local"`)
-		return
-	}
-
-	backend, err := s.connectFn(req)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
-		return
-	}
-	tables, err := backend.ListTables(r.Context())
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "connected but failed to list tables: "+err.Error())
-		return
-	}
-	tables = append([]string(nil), tables...)
-	sort.Strings(tables)
-
-	s.setBackend(backend)
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{"tables": tables})
-}
-
-func (s *server) handleListTables(w http.ResponseWriter, r *http.Request) {
-	backend, ok := s.getBackend()
-	if !ok {
-		writeError(w, http.StatusConflict, "not connected")
-		return
-	}
-	tables, err := backend.ListTables(r.Context())
+func (s *server) handleProfiles(w http.ResponseWriter, r *http.Request) {
+	names, def, err := s.profilesFn()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	tables = append([]string(nil), tables...)
-	sort.Strings(tables)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"tables": tables})
+	if names == nil {
+		names = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"profiles": names, "default": def})
+}
+
+type discoverRequest struct {
+	Profile string `json:"profile"`
+}
+
+func (s *server) handleDiscover(w http.ResponseWriter, r *http.Request) {
+	var req discoverRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Switching profile resets the per-region client cache.
+	s.mu.Lock()
+	s.activeProfile = req.Profile
+	s.clients = map[string]Backend{}
+	s.mu.Unlock()
+
+	regions, err := s.discoverFn(r.Context(), req.Profile)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to discover regions: "+err.Error())
+		return
+	}
+	sort.Strings(regions)
+
+	out := make([]RegionTables, 0, len(regions))
+	for _, region := range regions {
+		backend, berr := s.backendFor(region)
+		if berr != nil {
+			continue // skip a region whose client can't be built
+		}
+		tables, terr := backend.ListTables(r.Context())
+		if terr != nil {
+			continue // skip a region we can't list
+		}
+		tables = append([]string(nil), tables...)
+		sort.Strings(tables)
+		out = append(out, RegionTables{Region: region, Tables: tables})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"profile": req.Profile, "regions": out})
 }
 
 func (s *server) handleSchema(w http.ResponseWriter, r *http.Request) {
-	backend, ok := s.getBackend()
-	if !ok {
-		writeError(w, http.StatusConflict, "not connected")
+	region := r.URL.Query().Get("region")
+	if region == "" {
+		writeError(w, http.StatusBadRequest, "region is required")
+		return
+	}
+	backend, err := s.backendFor(region)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
 		return
 	}
 	info, err := backend.DescribeTable(r.Context(), r.PathValue("name"))
@@ -183,9 +199,14 @@ func (s *server) handleSchema(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
-	backend, ok := s.getBackend()
-	if !ok {
-		writeError(w, http.StatusConflict, "not connected")
+	region := r.URL.Query().Get("region")
+	if region == "" {
+		writeError(w, http.StatusBadRequest, "region is required")
+		return
+	}
+	backend, err := s.backendFor(region)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
 		return
 	}
 	name := r.PathValue("name")
@@ -267,9 +288,14 @@ var queryOperators = map[string]query.Operator{
 }
 
 func (s *server) handleQuery(w http.ResponseWriter, r *http.Request) {
-	backend, ok := s.getBackend()
-	if !ok {
-		writeError(w, http.StatusConflict, "not connected")
+	region := r.URL.Query().Get("region")
+	if region == "" {
+		writeError(w, http.StatusBadRequest, "region is required")
+		return
+	}
+	backend, err := s.backendFor(region)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
 		return
 	}
 	name := r.PathValue("name")
@@ -410,9 +436,14 @@ type createTableRequest struct {
 }
 
 func (s *server) handlePutItem(w http.ResponseWriter, r *http.Request) {
-	backend, ok := s.getBackend()
-	if !ok {
-		writeError(w, http.StatusConflict, "not connected")
+	region := r.URL.Query().Get("region")
+	if region == "" {
+		writeError(w, http.StatusBadRequest, "region is required")
+		return
+	}
+	backend, err := s.backendFor(region)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
 		return
 	}
 	name := r.PathValue("name")
@@ -435,9 +466,14 @@ func (s *server) handlePutItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleDeleteItem(w http.ResponseWriter, r *http.Request) {
-	backend, ok := s.getBackend()
-	if !ok {
-		writeError(w, http.StatusConflict, "not connected")
+	region := r.URL.Query().Get("region")
+	if region == "" {
+		writeError(w, http.StatusBadRequest, "region is required")
+		return
+	}
+	backend, err := s.backendFor(region)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
 		return
 	}
 	name := r.PathValue("name")
@@ -489,9 +525,14 @@ func (s *server) handleDeleteItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
-	backend, ok := s.getBackend()
-	if !ok {
-		writeError(w, http.StatusConflict, "not connected")
+	region := r.URL.Query().Get("region")
+	if region == "" {
+		writeError(w, http.StatusBadRequest, "region is required")
+		return
+	}
+	backend, err := s.backendFor(region)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to connect: "+err.Error())
 		return
 	}
 
