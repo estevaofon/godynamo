@@ -16,6 +16,9 @@ type Backend interface {
 		startKey map[string]types.AttributeValue,
 		filterExpr string, names map[string]string, values map[string]interface{}) (*dynamo.ScanResult, error)
 	QueryTable(ctx context.Context, input dynamo.QueryInput) (*dynamo.QueryResult, error)
+	PutItem(ctx context.Context, tableName string, item map[string]types.AttributeValue) error
+	DeleteItem(ctx context.Context, tableName string, key map[string]types.AttributeValue) error
+	CreateTable(ctx context.Context, input dynamo.CreateTableInput) error
 }
 
 // Compile-time check that the production client satisfies Backend.

@@ -65,6 +65,9 @@ func (s *server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /tables/{name}/schema", s.handleSchema)
 	mux.HandleFunc("GET /tables/{name}/scan", s.handleScan)
 	mux.HandleFunc("POST /tables/{name}/query", s.handleQuery)
+	mux.HandleFunc("POST /tables/{name}/item", s.handlePutItem)
+	mux.HandleFunc("DELETE /tables/{name}/item", s.handleDeleteItem)
+	mux.HandleFunc("POST /tables", s.handleCreateTable)
 	return s.withMiddleware(mux)
 }
 
@@ -366,6 +369,130 @@ func (s *server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		"count":        count,
 		"scannedCount": scannedCount,
 	})
+}
+
+type itemRequest struct {
+	JSON string `json:"json"`
+}
+
+type createTableRequest struct {
+	Name        string `json:"name"`
+	PK          string `json:"pk"`
+	PKType      string `json:"pkType"`
+	SK          string `json:"sk"`
+	SKType      string `json:"skType"`
+	BillingMode string `json:"billingMode"`
+	RCU         int64  `json:"rcu"`
+	WCU         int64  `json:"wcu"`
+}
+
+func (s *server) handlePutItem(w http.ResponseWriter, r *http.Request) {
+	backend, ok := s.getBackend()
+	if !ok {
+		writeError(w, http.StatusConflict, "not connected")
+		return
+	}
+	name := r.PathValue("name")
+
+	var req itemRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	item, err := models.JSONToItem(req.JSON)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := backend.PutItem(r.Context(), name, item); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+func (s *server) handleDeleteItem(w http.ResponseWriter, r *http.Request) {
+	backend, ok := s.getBackend()
+	if !ok {
+		writeError(w, http.StatusConflict, "not connected")
+		return
+	}
+	name := r.PathValue("name")
+
+	var req itemRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	item, err := models.JSONToItem(req.JSON)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	info, err := backend.DescribeTable(r.Context(), name)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	key := make(map[string]types.AttributeValue)
+	if info.PartitionKey != "" {
+		v, present := item[info.PartitionKey]
+		if !present {
+			writeError(w, http.StatusBadRequest, "item is missing the partition key: "+info.PartitionKey)
+			return
+		}
+		key[info.PartitionKey] = v
+	}
+	if info.SortKey != "" {
+		v, present := item[info.SortKey]
+		if !present {
+			writeError(w, http.StatusBadRequest, "item is missing the sort key: "+info.SortKey)
+			return
+		}
+		key[info.SortKey] = v
+	}
+
+	if err := backend.DeleteItem(r.Context(), name, key); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+func (s *server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
+	backend, ok := s.getBackend()
+	if !ok {
+		writeError(w, http.StatusConflict, "not connected")
+		return
+	}
+
+	var req createTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" || req.PK == "" {
+		writeError(w, http.StatusBadRequest, "table name and partition key are required")
+		return
+	}
+
+	input := dynamo.CreateTableInput{
+		TableName:     req.Name,
+		PartitionKey:  req.PK,
+		PartitionType: strings.ToUpper(req.PKType),
+		SortKey:       req.SK,
+		SortKeyType:   strings.ToUpper(req.SKType),
+		BillingMode:   req.BillingMode,
+		ReadCapacity:  req.RCU,
+		WriteCapacity: req.WCU,
+	}
+	if err := backend.CreateTable(r.Context(), input); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

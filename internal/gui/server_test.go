@@ -20,6 +20,12 @@ type fakeBackend struct {
 	scanErr  error
 	query    *dynamo.QueryResult
 	queryErr error
+	putItem   map[string]types.AttributeValue
+	putErr    error
+	deleteKey map[string]types.AttributeValue
+	deleteErr error
+	createIn  dynamo.CreateTableInput
+	createErr error
 }
 
 func (f *fakeBackend) ListTables(ctx context.Context) ([]string, error) { return f.tables, nil }
@@ -36,6 +42,21 @@ func (f *fakeBackend) ScanTable(ctx context.Context, name string, limit int32,
 
 func (f *fakeBackend) QueryTable(ctx context.Context, input dynamo.QueryInput) (*dynamo.QueryResult, error) {
 	return f.query, f.queryErr
+}
+
+func (f *fakeBackend) PutItem(ctx context.Context, tableName string, item map[string]types.AttributeValue) error {
+	f.putItem = item
+	return f.putErr
+}
+
+func (f *fakeBackend) DeleteItem(ctx context.Context, tableName string, key map[string]types.AttributeValue) error {
+	f.deleteKey = key
+	return f.deleteErr
+}
+
+func (f *fakeBackend) CreateTable(ctx context.Context, input dynamo.CreateTableInput) error {
+	f.createIn = input
+	return f.createErr
 }
 
 func newTestServer(b Backend) *server {
@@ -271,5 +292,77 @@ func TestQueryNoEffectiveFilter(t *testing.T) {
 	rec := do(s, http.MethodPost, "/tables/t/query", `{"conditions":[]}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPutItem(t *testing.T) {
+	f := &fakeBackend{}
+	s := newTestServer(f)
+	rec := do(s, http.MethodPost, "/tables/t/item", `{"json":"{\"id\":\"1\",\"name\":\"Alice\"}"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if f.putItem["id"] == nil {
+		t.Fatalf("expected item passed to PutItem, got %v", f.putItem)
+	}
+}
+
+func TestPutItemInvalidJSON(t *testing.T) {
+	s := newTestServer(&fakeBackend{})
+	rec := do(s, http.MethodPost, "/tables/t/item", `{"json":"not json"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
+	}
+}
+
+func TestDeleteItemDerivesKey(t *testing.T) {
+	f := &fakeBackend{info: &dynamo.TableInfo{PartitionKey: "id", SortKey: "sk"}}
+	s := newTestServer(f)
+	rec := do(s, http.MethodDelete, "/tables/t/item", `{"json":"{\"id\":\"1\",\"sk\":\"a\",\"extra\":\"x\"}"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if len(f.deleteKey) != 2 {
+		t.Fatalf("expected key with pk+sk only, got %v", f.deleteKey)
+	}
+	if f.deleteKey["id"] == nil || f.deleteKey["sk"] == nil {
+		t.Fatalf("key missing pk/sk: %v", f.deleteKey)
+	}
+}
+
+func TestDeleteItemMissingKey(t *testing.T) {
+	f := &fakeBackend{info: &dynamo.TableInfo{PartitionKey: "id"}}
+	s := newTestServer(f)
+	rec := do(s, http.MethodDelete, "/tables/t/item", `{"json":"{\"other\":\"x\"}"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
+	}
+}
+
+func TestCreateTable(t *testing.T) {
+	f := &fakeBackend{}
+	s := newTestServer(f)
+	rec := do(s, http.MethodPost, "/tables", `{"name":"NewT","pk":"id","pkType":"S","billingMode":"PAY_PER_REQUEST"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if f.createIn.TableName != "NewT" || f.createIn.PartitionKey != "id" {
+		t.Fatalf("createIn=%+v", f.createIn)
+	}
+}
+
+func TestCreateTableValidates(t *testing.T) {
+	s := newTestServer(&fakeBackend{})
+	rec := do(s, http.MethodPost, "/tables", `{"pk":"id"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
+	}
+}
+
+func TestWriteNotConnected(t *testing.T) {
+	s := newServer("test-token")
+	rec := do(s, http.MethodPost, "/tables/t/item", `{"json":"{}"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d", rec.Code)
 	}
 }
