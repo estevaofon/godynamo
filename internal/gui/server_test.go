@@ -377,3 +377,101 @@ func TestCreateTableRequiresPKType(t *testing.T) {
 		t.Fatalf("want 400, got %d", rec.Code)
 	}
 }
+
+func TestQueryForceScanIgnoresIndexableEquality(t *testing.T) {
+	s := newTestServer(&fakeBackend{
+		info: &dynamo.TableInfo{Name: "t", PartitionKey: "id"},
+		scan: &dynamo.ScanResult{
+			Items: []map[string]types.AttributeValue{{"id": &types.AttributeValueMemberS{Value: "1"}}},
+			Count: 1,
+		},
+	})
+	// id = 1 would normally Query the table; strategy:scan must force a Scan.
+	rec := do(s, http.MethodPost, "/tables/t/query",
+		`{"conditions":[{"name":"id","op":"eq","value":"1"}],"strategy":{"mode":"scan"}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Mode  string `json:"mode"`
+		Index string `json:"index"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Mode != "scan" {
+		t.Fatalf("want mode scan, got %q", resp.Mode)
+	}
+	if resp.Index != "" {
+		t.Fatalf("want empty index for scan, got %q", resp.Index)
+	}
+}
+
+func TestQueryForceIndexUsesGSI(t *testing.T) {
+	s := newTestServer(&fakeBackend{
+		info: &dynamo.TableInfo{
+			Name: "t", PartitionKey: "id",
+			GSIs: []dynamo.IndexInfo{{Name: "by-email", PartitionKey: "email"}},
+		},
+		query: &dynamo.QueryResult{
+			Items: []map[string]types.AttributeValue{{"email": &types.AttributeValueMemberS{Value: "a@b.com"}}},
+			Count: 1,
+		},
+	})
+	rec := do(s, http.MethodPost, "/tables/t/query",
+		`{"conditions":[{"name":"email","op":"eq","value":"a@b.com"}],"strategy":{"mode":"query","index":"by-email"}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Mode  string `json:"mode"`
+		Index string `json:"index"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Mode != "query" {
+		t.Fatalf("want mode query, got %q", resp.Mode)
+	}
+	if resp.Index != "by-email" {
+		t.Fatalf("want index by-email, got %q", resp.Index)
+	}
+}
+
+func TestQueryForceIndexWithoutEqualityIs400(t *testing.T) {
+	s := newTestServer(&fakeBackend{
+		info: &dynamo.TableInfo{
+			Name: "t", PartitionKey: "id",
+			GSIs: []dynamo.IndexInfo{{Name: "by-email", PartitionKey: "email"}},
+		},
+	})
+	// begins_with on email is not an equality, so forcing the index must 400.
+	rec := do(s, http.MethodPost, "/tables/t/query",
+		`{"conditions":[{"name":"email","op":"begins_with","value":"a"}],"strategy":{"mode":"query","index":"by-email"}}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestQueryAutoReturnsIndexName(t *testing.T) {
+	s := newTestServer(&fakeBackend{
+		info: &dynamo.TableInfo{
+			Name: "t", PartitionKey: "id",
+			GSIs: []dynamo.IndexInfo{{Name: "by-email", PartitionKey: "email"}},
+		},
+		query: &dynamo.QueryResult{
+			Items: []map[string]types.AttributeValue{{"email": &types.AttributeValueMemberS{Value: "a@b.com"}}},
+			Count: 1,
+		},
+	})
+	// No strategy -> auto; the planner picks the GSI; the response must report it.
+	rec := do(s, http.MethodPost, "/tables/t/query",
+		`{"conditions":[{"name":"email","op":"eq","value":"a@b.com"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Mode  string `json:"mode"`
+		Index string `json:"index"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Mode != "query" || resp.Index != "by-email" {
+		t.Fatalf("want query/by-email, got %q/%q", resp.Mode, resp.Index)
+	}
+}

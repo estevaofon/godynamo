@@ -235,6 +235,15 @@ type queryRequest struct {
 	Conditions []queryCondition `json:"conditions"`
 	Limit      int32            `json:"limit"`
 	Cursor     string           `json:"cursor"`
+	Strategy   queryStrategy    `json:"strategy"`
+}
+
+// queryStrategy lets the GUI override the auto planner: Mode "" / "auto" lets
+// the planner decide, "scan" forces a Scan with the full filter, and "query"
+// forces a Query on Index ("" = base table, otherwise a GSI name).
+type queryStrategy struct {
+	Mode  string `json:"mode"`
+	Index string `json:"index"`
 }
 
 type queryCondition struct {
@@ -309,7 +318,20 @@ func (s *server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	plan := query.BuildPlan(info, expr, names, values)
+	var plan query.Plan
+	switch req.Strategy.Mode {
+	case "scan":
+		plan = query.Plan{Mode: query.ModeScan, FilterExpression: expr, Names: names, Values: values}
+	case "query":
+		p, perr := query.PlanForIndex(info, conds, req.Strategy.Index)
+		if perr != nil {
+			writeError(w, http.StatusBadRequest, perr.Error())
+			return
+		}
+		plan = p
+	default:
+		plan = query.BuildPlan(info, expr, names, values)
+	}
 
 	var (
 		rawItems     []map[string]types.AttributeValue
@@ -364,6 +386,7 @@ func (s *server) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"mode":         mode,
+		"index":        plan.IndexName,
 		"items":        items,
 		"cursor":       cursor,
 		"count":        count,
