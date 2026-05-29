@@ -1,0 +1,895 @@
+# GoDynamo GUI Parity — Phase C (Productivity) Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Add export (JSON/CSV via native Save dialog), copy-to-clipboard, in-item JSON search, and region/connection switching to the GUI.
+
+**Architecture:** Electron-only — no Go changes. Export uses a main-process `export-file` IPC handler (`dialog.showSaveDialog` + `fs.writeFile`); the renderer builds JSON/CSV from the loaded items. Copy uses `navigator.clipboard`; in-item search highlights matches by HTML-escaping then wrapping in `<mark>`; "Change connection" resets the view and reuses the existing `POST /connect`.
+
+**Tech Stack:** Electron main process (`dialog`, `fs`); vanilla renderer.
+
+**Source spec:** `docs/superpowers/specs/2026-05-28-godynamo-gui-parity-design.md`
+
+---
+
+## Conventions
+
+- **No Go changes**; `internal/**` and `go.mod`/`go.sum` untouched. (Run `go build ./...` only as a sanity check.)
+- **No real AWS.** Estevao runs live tests.
+- **Never run `go run . gui` / `npm start`** (they block). Verify with `node --check` + `go build ./...`.
+- **Commit trailer:** every commit ends with a blank line then `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`. No backticks in commit messages.
+- **CSP stays:** `default-src 'self'; script-src 'self'; connect-src http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline';` (the `<mark>` highlighting builds HTML from ESCAPED text — no inline scripts, XSS-safe).
+
+## File structure
+
+```
+electron/main.js             # MODIFY — add export-file IPC handler (dialog + fs)
+electron/preload.js          # MODIFY — add exportFile(defaultName, content)
+electron/renderer/index.html # REWRITE — Export JSON/CSV + Change-connection buttons; detail search/matches/Copy
+electron/renderer/app.js     # REWRITE — export builders, copy, in-item search highlight, disconnect
+electron/renderer/styles.css # MODIFY — append search/mark/button styles
+```
+
+---
+
+## Task 1: Export plumbing (main process + preload)
+
+**Files:**
+- Modify: `electron/main.js`
+- Modify: `electron/preload.js`
+
+- [ ] **Step 1: `electron/main.js` — add `dialog`/`fs` imports + the export-file IPC handler.** Read it first, then WRITE this exact content:
+```js
+const { app, BrowserWindow, ipcMain, dialog } = require('electron')
+const path = require('path')
+const fs = require('fs')
+
+const PORT = process.env.GODYNAMO_BRIDGE_PORT
+const TOKEN = process.env.GODYNAMO_BRIDGE_TOKEN
+
+function createWindow() {
+  const win = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    title: 'GoDynamo',
+    backgroundColor: '#0b0f1a',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html'))
+}
+
+app.whenReady().then(() => {
+  if (!PORT || !TOKEN) {
+    dialog.showErrorBox(
+      'GoDynamo',
+      'Missing GODYNAMO_BRIDGE_PORT / GODYNAMO_BRIDGE_TOKEN.\nLaunch the GUI via: go run . gui'
+    )
+    app.quit()
+    return
+  }
+  // The renderer never sees the token directly; the preload fetches it once via IPC.
+  ipcMain.handle('bridge-info', () => ({
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    token: TOKEN,
+  }))
+  // Export: native Save dialog + write file (renderer builds the content).
+  ipcMain.handle('export-file', async (_event, { defaultName, content }) => {
+    const { canceled, filePath } = await dialog.showSaveDialog({ defaultPath: defaultName })
+    if (canceled || !filePath) {
+      return { canceled: true }
+    }
+    await fs.promises.writeFile(filePath, content, 'utf8')
+    return { path: filePath }
+  })
+  createWindow()
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+})
+
+app.on('window-all-closed', () => {
+  app.quit()
+})
+```
+
+- [ ] **Step 2: `electron/preload.js` — add `exportFile`.** Replace the closing of the `exposeInMainWorld` object (currently):
+```js
+  createTable: (form) => call('POST', '/tables', form),
+})
+```
+with:
+```js
+  createTable: (form) => call('POST', '/tables', form),
+  exportFile: (defaultName, content) => ipcRenderer.invoke('export-file', { defaultName, content }),
+})
+```
+
+- [ ] **Step 3: Verify**
+
+Run: `node --check electron/main.js` (no output), `node --check electron/preload.js` (no output), `go build ./...` (clean).
+
+- [ ] **Step 4: Commit**
+
+```
+git add electron/main.js electron/preload.js
+git commit -m "feat(gui): add export-file IPC (native Save dialog) and preload exportFile"
+```
+(+ trailer)
+
+---
+
+## Task 2: Renderer — export, copy, in-item search, change connection
+
+**Files:**
+- Modify: `electron/renderer/index.html` (rewrite)
+- Modify: `electron/renderer/app.js` (rewrite)
+- Modify: `electron/renderer/styles.css` (append)
+
+- [ ] **Step 1: `electron/renderer/index.html` — REWRITE.** Read it first, then WRITE exactly:
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; connect-src http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline';" />
+  <title>GoDynamo</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <section id="connect-screen" class="screen">
+    <div class="connect-card">
+      <h1>⚡ GoDynamo</h1>
+      <div class="field">
+        <label><input type="radio" name="mode" value="aws" checked /> AWS</label>
+        <label><input type="radio" name="mode" value="local" /> DynamoDB Local</label>
+      </div>
+      <div class="field" id="aws-fields">
+        <label for="region">Region</label>
+        <select id="region"></select>
+      </div>
+      <div class="field hidden" id="local-fields">
+        <label for="endpoint">Endpoint</label>
+        <input type="text" id="endpoint" value="http://localhost:8000" />
+      </div>
+      <button id="connect-btn">Connect</button>
+      <p id="connect-error" class="error"></p>
+    </div>
+  </section>
+
+  <section id="main-screen" class="screen hidden">
+    <aside id="sidebar">
+      <button id="create-table-btn">+ New table</button>
+      <button id="disconnect-btn">Change connection</button>
+      <input type="text" id="table-filter" placeholder="Filter tables…" />
+      <ul id="table-list"></ul>
+    </aside>
+    <main id="content">
+      <header id="toolbar">
+        <span id="current-table"></span>
+        <button id="new-item-btn" disabled>New item</button>
+        <button id="filter-btn" disabled>Filter</button>
+        <button id="schema-btn" disabled>Schema</button>
+        <button id="export-json" disabled>Export JSON</button>
+        <button id="export-csv" disabled>Export CSV</button>
+        <label id="pagesize-label">Page size
+          <select id="page-size">
+            <option>50</option>
+            <option>100</option>
+            <option>300</option>
+            <option selected>500</option>
+            <option>1000</option>
+          </select>
+        </label>
+        <button id="more-btn" disabled>Resume fetching</button>
+        <span id="mode-badge"></span>
+        <span id="status"></span>
+      </header>
+      <section id="filter-panel" class="hidden">
+        <div id="filter-rows"></div>
+        <div id="filter-actions">
+          <button id="filter-add">+ Condition</button>
+          <button id="filter-apply">Apply</button>
+          <button id="filter-clear">Clear</button>
+        </div>
+      </section>
+      <div id="grid-wrap">
+        <table id="grid"><thead></thead><tbody></tbody></table>
+      </div>
+    </main>
+  </section>
+
+  <div id="detail" class="hidden">
+    <div class="detail-card">
+      <header>
+        <span id="detail-title"></span>
+        <input type="text" id="detail-search" placeholder="Find…" />
+        <span id="detail-matches"></span>
+        <button id="detail-copy">Copy</button>
+        <button id="detail-edit" class="hidden">Edit</button>
+        <button id="detail-delete" class="hidden">Delete</button>
+        <button id="detail-close">✕</button>
+      </header>
+      <pre id="detail-body"></pre>
+    </div>
+  </div>
+
+  <div id="editor" class="hidden">
+    <div class="modal-card">
+      <header>
+        <span id="editor-title"></span>
+        <button id="editor-close">✕</button>
+      </header>
+      <textarea id="editor-text" spellcheck="false"></textarea>
+      <p id="editor-error" class="error"></p>
+      <div class="modal-actions">
+        <button id="editor-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="createtable" class="hidden">
+    <div class="modal-card">
+      <header>
+        <span>Create table</span>
+        <button id="ct-close">✕</button>
+      </header>
+      <div class="ct-form">
+        <label>Table name <input type="text" id="ct-name" /></label>
+        <label>Partition key <input type="text" id="ct-pk" /></label>
+        <label>Partition key type
+          <select id="ct-pktype"><option>S</option><option>N</option><option>B</option></select>
+        </label>
+        <label>Sort key (optional) <input type="text" id="ct-sk" /></label>
+        <label>Sort key type
+          <select id="ct-sktype"><option>S</option><option>N</option><option>B</option></select>
+        </label>
+        <label>Billing mode
+          <select id="ct-billing"><option>PAY_PER_REQUEST</option><option>PROVISIONED</option></select>
+        </label>
+        <label>Read capacity <input type="number" id="ct-rcu" value="5" /></label>
+        <label>Write capacity <input type="number" id="ct-wcu" value="5" /></label>
+      </div>
+      <p id="ct-error" class="error"></p>
+      <div class="modal-actions">
+        <button id="ct-create">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirm" class="hidden">
+    <div class="modal-card small">
+      <p id="confirm-text"></p>
+      <div class="modal-actions">
+        <button id="confirm-no">Cancel</button>
+        <button id="confirm-yes">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+```
+
+- [ ] **Step 2: `electron/renderer/app.js` — REWRITE.** Read it first, then WRITE exactly:
+```js
+const AWS_REGIONS = [
+  'us-east-1','us-east-2','us-west-1','us-west-2','af-south-1','ap-east-1',
+  'ap-south-1','ap-south-2','ap-northeast-1','ap-northeast-2','ap-northeast-3',
+  'ap-southeast-1','ap-southeast-2','ap-southeast-3','ap-southeast-4',
+  'ca-central-1','eu-central-1','eu-central-2','eu-west-1','eu-west-2','eu-west-3',
+  'eu-south-1','eu-south-2','eu-north-1','il-central-1','me-south-1','me-central-1','sa-east-1',
+]
+
+const OPERATORS = [
+  { op: 'eq', label: '= Equals' },
+  { op: 'ne', label: '≠ Not Equals' },
+  { op: 'gt', label: '> Greater Than' },
+  { op: 'lt', label: '< Less Than' },
+  { op: 'ge', label: '≥ Greater or Equal' },
+  { op: 'le', label: '≤ Less or Equal' },
+  { op: 'contains', label: '∋ Contains' },
+  { op: 'not_contains', label: '∌ Not Contains' },
+  { op: 'begins_with', label: '^ Begins With' },
+  { op: 'exists', label: '∃ Exists' },
+  { op: 'not_exists', label: '∄ Not Exists' },
+]
+
+const VALUE_OPS = new Set(['eq', 'ne', 'gt', 'lt', 'ge', 'le', 'contains', 'not_contains', 'begins_with'])
+
+const state = {
+  tables: [],
+  currentTable: null,
+  keys: { partition: '', sort: '' },
+  schemaRaw: '',
+  cursor: '',
+  items: [],
+  conditions: [],
+  filterActive: false,
+  mode: '',
+  scanned: 0,
+  selectedIdx: -1,
+  selectedItem: null,
+  detailText: '',
+}
+
+const $ = (id) => document.getElementById(id)
+const show = (el) => el.classList.remove('hidden')
+const hide = (el) => el.classList.add('hidden')
+
+function initConnectScreen() {
+  const regionSel = $('region')
+  AWS_REGIONS.forEach((r) => {
+    const opt = document.createElement('option')
+    opt.value = r
+    opt.textContent = r
+    regionSel.appendChild(opt)
+  })
+  document.querySelectorAll('input[name="mode"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      const mode = document.querySelector('input[name="mode"]:checked').value
+      if (mode === 'aws') { show($('aws-fields')); hide($('local-fields')) }
+      else { hide($('aws-fields')); show($('local-fields')) }
+    })
+  })
+  $('connect-btn').addEventListener('click', onConnect)
+}
+
+async function onConnect() {
+  const mode = document.querySelector('input[name="mode"]:checked').value
+  const cfg = { mode }
+  if (mode === 'aws') cfg.region = $('region').value
+  else cfg.endpoint = $('endpoint').value
+
+  $('connect-error').textContent = ''
+  $('connect-btn').disabled = true
+  try {
+    const data = await window.api.connect(cfg)
+    state.tables = data.tables || []
+    renderTableList()
+    hide($('connect-screen'))
+    show($('main-screen'))
+  } catch (err) {
+    $('connect-error').textContent = err.message
+  } finally {
+    $('connect-btn').disabled = false
+  }
+}
+
+function disconnect() {
+  state.currentTable = null
+  state.items = []
+  state.conditions = []
+  state.filterActive = false
+  state.cursor = ''
+  state.selectedIdx = -1
+  state.selectedItem = null
+  $('grid').querySelector('thead').innerHTML = ''
+  $('grid').querySelector('tbody').innerHTML = ''
+  $('current-table').textContent = ''
+  $('status').textContent = ''
+  $('mode-badge').textContent = ''
+  hide($('filter-panel'))
+  hide($('main-screen'))
+  $('connect-error').textContent = ''
+  show($('connect-screen'))
+}
+
+function renderTableList() {
+  const filter = $('table-filter').value.toLowerCase()
+  const ul = $('table-list')
+  ul.innerHTML = ''
+  state.tables
+    .filter((t) => t.toLowerCase().includes(filter))
+    .forEach((t) => {
+      const li = document.createElement('li')
+      li.textContent = t
+      li.className = t === state.currentTable ? 'active' : ''
+      li.addEventListener('click', () => selectTable(t))
+      ul.appendChild(li)
+    })
+}
+
+async function refreshTables() {
+  const data = await window.api.listTables()
+  state.tables = data.tables || []
+  renderTableList()
+}
+
+async function selectTable(name) {
+  state.currentTable = name
+  state.cursor = ''
+  state.items = []
+  state.conditions = []
+  state.filterActive = false
+  state.mode = ''
+  state.scanned = 0
+  state.selectedIdx = -1
+  state.selectedItem = null
+  $('current-table').textContent = name
+  $('status').textContent = 'Loading…'
+  $('mode-badge').textContent = ''
+  $('schema-btn').disabled = true
+  $('filter-btn').disabled = true
+  $('new-item-btn').disabled = true
+  $('export-json').disabled = true
+  $('export-csv').disabled = true
+  $('more-btn').disabled = true
+  hide($('filter-panel'))
+  renderFilterRows()
+  renderTableList()
+  try {
+    const schema = await window.api.schema(name)
+    state.keys = {
+      partition: (schema.info && schema.info.PartitionKey) || '',
+      sort: (schema.info && schema.info.SortKey) || '',
+    }
+    state.schemaRaw = schema.rawJSON || JSON.stringify(schema.info, null, 2)
+    $('schema-btn').disabled = false
+    $('filter-btn').disabled = false
+    $('new-item-btn').disabled = false
+    $('export-json').disabled = false
+    $('export-csv').disabled = false
+    await loadPage(true)
+  } catch (err) {
+    $('status').textContent = 'Error: ' + err.message
+  }
+}
+
+function pageSize() {
+  return parseInt($('page-size').value, 10) || 500
+}
+
+function activeConditions() {
+  return state.conditions
+    .filter((c) => c.name.trim() !== '' && (!VALUE_OPS.has(c.op) || c.value.trim() !== ''))
+    .map((c) => ({ name: c.name, op: c.op, value: c.value }))
+}
+
+async function loadPage(reset) {
+  const cursor = reset ? '' : state.cursor
+  try {
+    let data
+    if (state.filterActive) {
+      data = await window.api.query(state.currentTable, {
+        conditions: activeConditions(),
+        limit: pageSize(),
+        cursor,
+      })
+      state.mode = data.mode || ''
+    } else {
+      data = await window.api.scan(state.currentTable, cursor, pageSize())
+      state.mode = ''
+    }
+    if (reset) {
+      state.items = []
+      state.scanned = 0
+      state.selectedIdx = -1
+      state.selectedItem = null
+    }
+    state.items = state.items.concat(data.items || [])
+    state.cursor = data.cursor || ''
+    if (state.filterActive) {
+      state.scanned += data.scannedCount || 0
+    }
+    $('more-btn').disabled = !state.cursor
+    updateStatus()
+    renderGrid()
+  } catch (err) {
+    $('status').textContent = 'Error: ' + err.message
+    $('more-btn').disabled = !state.cursor
+  }
+}
+
+function updateStatus() {
+  let s = `${state.items.length} returned`
+  if (state.filterActive) {
+    s += ` · scanned ${state.scanned}`
+    $('mode-badge').textContent = state.mode ? state.mode.toUpperCase() : ''
+  } else {
+    $('mode-badge').textContent = ''
+  }
+  if (state.cursor) s += ' · more available'
+  $('status').textContent = s
+}
+
+function renderFilterRows() {
+  const wrap = $('filter-rows')
+  wrap.innerHTML = ''
+  state.conditions.forEach((cond, i) => {
+    const row = document.createElement('div')
+    row.className = 'filter-row'
+
+    const nameIn = document.createElement('input')
+    nameIn.type = 'text'
+    nameIn.placeholder = 'attribute'
+    nameIn.value = cond.name
+    nameIn.addEventListener('input', () => { state.conditions[i].name = nameIn.value })
+
+    const opSel = document.createElement('select')
+    OPERATORS.forEach((o) => {
+      const opt = document.createElement('option')
+      opt.value = o.op
+      opt.textContent = o.label
+      if (o.op === cond.op) opt.selected = true
+      opSel.appendChild(opt)
+    })
+    opSel.addEventListener('change', () => { state.conditions[i].op = opSel.value })
+
+    const valIn = document.createElement('input')
+    valIn.type = 'text'
+    valIn.placeholder = 'value'
+    valIn.value = cond.value
+    valIn.addEventListener('input', () => { state.conditions[i].value = valIn.value })
+
+    const rm = document.createElement('button')
+    rm.textContent = '✕'
+    rm.className = 'filter-remove'
+    rm.addEventListener('click', () => removeCondition(i))
+
+    row.appendChild(nameIn)
+    row.appendChild(opSel)
+    row.appendChild(valIn)
+    row.appendChild(rm)
+    wrap.appendChild(row)
+  })
+}
+
+function addCondition() {
+  state.conditions.push({ name: '', op: 'eq', value: '' })
+  renderFilterRows()
+}
+
+function removeCondition(i) {
+  state.conditions.splice(i, 1)
+  renderFilterRows()
+}
+
+function toggleFilter() {
+  const panel = $('filter-panel')
+  if (panel.classList.contains('hidden')) {
+    if (state.conditions.length === 0) addCondition()
+    show(panel)
+  } else {
+    hide(panel)
+  }
+}
+
+async function applyFilter() {
+  state.filterActive = activeConditions().length > 0
+  state.cursor = ''
+  await loadPage(true)
+}
+
+async function clearFilter() {
+  state.conditions = []
+  state.filterActive = false
+  renderFilterRows()
+  state.cursor = ''
+  await loadPage(true)
+}
+
+function columnOrder() {
+  const cols = new Set()
+  state.items.forEach((it) => Object.keys(it).forEach((k) => cols.add(k)))
+  const { partition, sort } = state.keys
+  const ordered = []
+  if (partition && cols.has(partition)) { ordered.push(partition); cols.delete(partition) }
+  if (sort && cols.has(sort)) { ordered.push(sort); cols.delete(sort) }
+  return ordered.concat([...cols].sort())
+}
+
+function cellText(value) {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+function renderGrid() {
+  const cols = columnOrder()
+  const thead = $('grid').querySelector('thead')
+  const tbody = $('grid').querySelector('tbody')
+  thead.innerHTML = ''
+  tbody.innerHTML = ''
+
+  const hr = document.createElement('tr')
+  cols.forEach((c) => {
+    const th = document.createElement('th')
+    th.textContent = c
+    hr.appendChild(th)
+  })
+  thead.appendChild(hr)
+
+  state.items.forEach((item, idx) => {
+    const tr = document.createElement('tr')
+    cols.forEach((c) => {
+      const td = document.createElement('td')
+      const text = cellText(item[c])
+      td.textContent = text.length > 80 ? text.slice(0, 77) + '…' : text
+      tr.appendChild(td)
+    })
+    tr.addEventListener('click', () => showItem(idx))
+    tbody.appendChild(tr)
+  })
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function renderDetailBody() {
+  const body = $('detail-body')
+  const term = $('detail-search').value
+  if (!term) {
+    body.textContent = state.detailText
+    $('detail-matches').textContent = ''
+    return
+  }
+  const escaped = escapeHtml(state.detailText)
+  const escTerm = escapeHtml(term)
+  const lower = escaped.toLowerCase()
+  const tlower = escTerm.toLowerCase()
+  let result = ''
+  let i = 0
+  let count = 0
+  while (true) {
+    const idx = lower.indexOf(tlower, i)
+    if (idx === -1) {
+      result += escaped.slice(i)
+      break
+    }
+    result += escaped.slice(i, idx) + '<mark>' + escaped.slice(idx, idx + escTerm.length) + '</mark>'
+    i = idx + escTerm.length
+    count++
+  }
+  body.innerHTML = result
+  $('detail-matches').textContent = count + (count === 1 ? ' match' : ' matches')
+}
+
+function openDetail(title, text, withEditDelete) {
+  state.detailText = text
+  $('detail-title').textContent = title
+  $('detail-search').value = ''
+  renderDetailBody()
+  if (withEditDelete) {
+    show($('detail-edit'))
+    show($('detail-delete'))
+  } else {
+    hide($('detail-edit'))
+    hide($('detail-delete'))
+  }
+  show($('detail'))
+}
+
+function showItem(idx) {
+  state.selectedIdx = idx
+  state.selectedItem = state.items[idx]
+  openDetail('Item', JSON.stringify(state.items[idx], null, 2), true)
+}
+
+function showSchema() {
+  openDetail('Schema: ' + state.currentTable, state.schemaRaw || '', false)
+}
+
+function copyDetail() {
+  navigator.clipboard.writeText(state.detailText).then(() => {
+    const btn = $('detail-copy')
+    const orig = btn.textContent
+    btn.textContent = 'Copied!'
+    setTimeout(() => { btn.textContent = orig }, 1200)
+  }).catch(() => {
+    $('detail-matches').textContent = 'copy failed'
+  })
+}
+
+function csvEscape(s) {
+  if (/[",\n]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"'
+  }
+  return s
+}
+
+function buildCSV() {
+  const cols = columnOrder()
+  const lines = [cols.map(csvEscape).join(',')]
+  state.items.forEach((item) => {
+    lines.push(cols.map((c) => csvEscape(cellText(item[c]))).join(','))
+  })
+  return lines.join('\n')
+}
+
+async function exportJSON() {
+  if (!state.currentTable) return
+  try {
+    await window.api.exportFile(state.currentTable + '.json', JSON.stringify(state.items, null, 2))
+  } catch (err) {
+    $('status').textContent = 'Export failed: ' + err.message
+  }
+}
+
+async function exportCSV() {
+  if (!state.currentTable) return
+  try {
+    await window.api.exportFile(state.currentTable + '.csv', buildCSV())
+  } catch (err) {
+    $('status').textContent = 'Export failed: ' + err.message
+  }
+}
+
+function openNewItem() {
+  const tmpl = {}
+  if (state.keys.partition) tmpl[state.keys.partition] = ''
+  if (state.keys.sort) tmpl[state.keys.sort] = ''
+  $('editor-title').textContent = 'New item'
+  $('editor-text').value = JSON.stringify(tmpl, null, 2)
+  $('editor-error').textContent = ''
+  show($('editor'))
+  $('editor-text').focus()
+}
+
+function openEditItem() {
+  if (!state.selectedItem) return
+  $('editor-title').textContent = 'Edit item'
+  $('editor-text').value = JSON.stringify(state.selectedItem, null, 2)
+  $('editor-error').textContent = ''
+  hide($('detail'))
+  show($('editor'))
+  $('editor-text').focus()
+}
+
+async function saveEditor() {
+  const text = $('editor-text').value
+  try {
+    JSON.parse(text)
+  } catch (e) {
+    $('editor-error').textContent = 'Invalid JSON: ' + e.message
+    return
+  }
+  $('editor-error').textContent = ''
+  $('editor-save').disabled = true
+  try {
+    await window.api.saveItem(state.currentTable, text)
+    hide($('editor'))
+    await loadPage(true)
+  } catch (err) {
+    $('editor-error').textContent = err.message
+  } finally {
+    $('editor-save').disabled = false
+  }
+}
+
+function confirmDelete() {
+  if (!state.selectedItem) return
+  $('confirm-text').textContent = 'Delete this item? This cannot be undone.'
+  show($('confirm'))
+}
+
+async function doDelete() {
+  hide($('confirm'))
+  if (!state.selectedItem) return
+  const json = JSON.stringify(state.selectedItem)
+  try {
+    await window.api.deleteItem(state.currentTable, json)
+    hide($('detail'))
+    await loadPage(true)
+  } catch (err) {
+    $('status').textContent = 'Error: ' + err.message
+  }
+}
+
+function openCreateTable() {
+  $('ct-name').value = ''
+  $('ct-pk').value = ''
+  $('ct-pktype').value = 'S'
+  $('ct-sk').value = ''
+  $('ct-sktype').value = 'S'
+  $('ct-billing').value = 'PAY_PER_REQUEST'
+  $('ct-rcu').value = '5'
+  $('ct-wcu').value = '5'
+  $('ct-error').textContent = ''
+  show($('createtable'))
+}
+
+async function submitCreateTable() {
+  const form = {
+    name: $('ct-name').value.trim(),
+    pk: $('ct-pk').value.trim(),
+    pkType: $('ct-pktype').value,
+    sk: $('ct-sk').value.trim(),
+    skType: $('ct-sktype').value,
+    billingMode: $('ct-billing').value,
+    rcu: parseInt($('ct-rcu').value, 10) || 0,
+    wcu: parseInt($('ct-wcu').value, 10) || 0,
+  }
+  if (!form.name || !form.pk) {
+    $('ct-error').textContent = 'Table name and partition key are required.'
+    return
+  }
+  $('ct-error').textContent = ''
+  $('ct-create').disabled = true
+  try {
+    await window.api.createTable(form)
+    hide($('createtable'))
+    await refreshTables()
+  } catch (err) {
+    $('ct-error').textContent = err.message
+  } finally {
+    $('ct-create').disabled = false
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  initConnectScreen()
+  $('table-filter').addEventListener('input', renderTableList)
+  $('schema-btn').addEventListener('click', showSchema)
+  $('filter-btn').addEventListener('click', toggleFilter)
+  $('filter-add').addEventListener('click', addCondition)
+  $('filter-apply').addEventListener('click', applyFilter)
+  $('filter-clear').addEventListener('click', clearFilter)
+  $('more-btn').addEventListener('click', () => loadPage(false))
+  $('page-size').addEventListener('change', () => { if (state.currentTable) loadPage(true) })
+  $('detail-close').addEventListener('click', () => hide($('detail')))
+  $('detail-search').addEventListener('input', renderDetailBody)
+  $('detail-copy').addEventListener('click', copyDetail)
+  $('new-item-btn').addEventListener('click', openNewItem)
+  $('create-table-btn').addEventListener('click', openCreateTable)
+  $('disconnect-btn').addEventListener('click', disconnect)
+  $('export-json').addEventListener('click', exportJSON)
+  $('export-csv').addEventListener('click', exportCSV)
+  $('detail-edit').addEventListener('click', openEditItem)
+  $('detail-delete').addEventListener('click', confirmDelete)
+  $('editor-close').addEventListener('click', () => hide($('editor')))
+  $('editor-save').addEventListener('click', saveEditor)
+  $('ct-close').addEventListener('click', () => hide($('createtable')))
+  $('ct-create').addEventListener('click', submitCreateTable)
+  $('confirm-no').addEventListener('click', () => hide($('confirm')))
+  $('confirm-yes').addEventListener('click', doDelete)
+})
+```
+
+- [ ] **Step 3: `electron/renderer/styles.css` — APPEND** these rules to the END of the file:
+```css
+#disconnect-btn { width: 100%; margin-bottom: 8px; }
+#detail-search { background: #0b0f1a; color: #c8d3f5; border: 1px solid #2a3450; border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+#detail-matches { font-size: 11px; color: #828bb8; }
+#detail-body mark { background: #e0af68; color: #0b0f1a; }
+```
+
+- [ ] **Step 4: Verify (do NOT launch the GUI)**
+
+Run: `node --check electron/renderer/app.js` (no output), `go build ./...` (clean).
+
+- [ ] **Step 5: Commit**
+
+```
+git add electron/renderer/index.html electron/renderer/app.js electron/renderer/styles.css
+git commit -m "feat(gui): add export JSON/CSV, copy, in-item search, and change-connection to the renderer"
+```
+(+ trailer)
+
+---
+
+## Self-review (performed against the spec)
+
+**1. Spec coverage**
+
+| Spec requirement | Task |
+|---|---|
+| Export JSON/CSV via native Save dialog | Task 1 (`export-file` IPC) + Task 2 (`exportJSON`/`exportCSV`/`buildCSV`) |
+| preload `exportFile` | Task 1 |
+| Copy row-as-JSON to clipboard | Task 2 (`copyDetail` — copies the displayed JSON) |
+| Cell value copy via native text selection | Inherent (grid cells are selectable text) — noted |
+| In-item JSON search (highlight + count) | Task 2 (`renderDetailBody`/`escapeHtml`) |
+| Region/connection switching | Task 2 (`disconnect` → connect screen → existing `POST /connect`) |
+| No Go changes | All (Go only built as a sanity check) |
+
+No gaps.
+
+**2. Placeholder scan:** No TBD/TODO/"handle errors". Complete file contents in every rewrite step. ✓
+
+**3. Type/name consistency:** preload `exportFile(defaultName, content)` ↔ main `ipcMain.handle('export-file', (_e, {defaultName, content}))` ↔ renderer `window.api.exportFile(name, content)` — keys match. New element IDs (`disconnect-btn`, `export-json`, `export-csv`, `detail-search`, `detail-matches`, `detail-copy`) all exist in index.html and are referenced in app.js. `openDetail(title,text,withEditDelete)` is used by both `showItem` (true) and `showSchema` (false); `state.detailText` set there and read by `copyDetail`/`renderDetailBody`. Phase A/B behavior (filter, paging, write modals, snapshot edit/delete) is preserved verbatim. ✓
