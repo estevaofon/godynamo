@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('path')
+const fs = require('fs')
 
 const PORT = process.env.GODYNAMO_BRIDGE_PORT
 const TOKEN = process.env.GODYNAMO_BRIDGE_TOKEN
@@ -21,7 +22,6 @@ function createWindow() {
 
 app.whenReady().then(() => {
   if (!PORT || !TOKEN) {
-    const { dialog } = require('electron')
     dialog.showErrorBox(
       'GoDynamo',
       'Missing GODYNAMO_BRIDGE_PORT / GODYNAMO_BRIDGE_TOKEN.\nLaunch the GUI via: go run . gui'
@@ -34,6 +34,15 @@ app.whenReady().then(() => {
     baseUrl: `http://127.0.0.1:${PORT}`,
     token: TOKEN,
   }))
+  // Export: native Save dialog + write file (renderer builds the content).
+  ipcMain.handle('export-file', async (_event, { defaultName, content }) => {
+    const { canceled, filePath } = await dialog.showSaveDialog({ defaultPath: defaultName })
+    if (canceled || !filePath) {
+      return { canceled: true }
+    }
+    await fs.promises.writeFile(filePath, content, 'utf8')
+    return { path: filePath }
+  })
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -43,4 +43,5 @@ contextBridge.exposeInMainWorld('api', {
   saveItem: (name, json) => call('POST', `/tables/${encodeURIComponent(name)}/item`, { json }),
   deleteItem: (name, json) => call('DELETE', `/tables/${encodeURIComponent(name)}/item`, { json }),
   createTable: (form) => call('POST', '/tables', form),
+  exportFile: (defaultName, content) => ipcRenderer.invoke('export-file', { defaultName, content }),
 })
