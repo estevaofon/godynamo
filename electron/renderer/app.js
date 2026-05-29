@@ -26,13 +26,18 @@ const state = {
   tables: [],
   currentTable: null,
   keys: { partition: '', sort: '' },
+  indexes: [],
   schemaRaw: '',
   cursor: '',
   items: [],
+  rendered: [],
   conditions: [],
   filterActive: false,
   mode: '',
   scanned: 0,
+  strategy: { mode: '', index: '' },
+  override: { mode: 'auto', index: '' },
+  sort: { column: null, dir: 'asc' },
   selectedIdx: -1,
   selectedItem: null,
   detailText: '',
@@ -125,10 +130,15 @@ async function selectTable(name) {
   state.currentTable = name
   state.cursor = ''
   state.items = []
+  state.rendered = []
   state.conditions = []
   state.filterActive = false
   state.mode = ''
   state.scanned = 0
+  state.indexes = []
+  state.strategy = { mode: '', index: '' }
+  state.override = { mode: 'auto', index: '' }
+  state.sort = { column: null, dir: 'asc' }
   state.selectedIdx = -1
   state.selectedItem = null
   $('current-table').textContent = name
@@ -141,21 +151,25 @@ async function selectTable(name) {
   $('export-csv').disabled = true
   $('more-btn').disabled = true
   hide($('filter-panel'))
+  hide($('filter-strategy'))
   renderFilterRows()
   renderTableList()
   try {
     const schema = await window.api.schema(name)
+    const info = schema.info || {}
     state.keys = {
-      partition: (schema.info && schema.info.PartitionKey) || '',
-      sort: (schema.info && schema.info.SortKey) || '',
+      partition: info.PartitionKey || '',
+      sort: info.SortKey || '',
     }
-    state.schemaRaw = schema.rawJSON || JSON.stringify(schema.info, null, 2)
+    state.indexes = buildIndexList(info)
+    state.schemaRaw = schema.rawJSON || JSON.stringify(info, null, 2)
     $('schema-btn').disabled = false
     $('filter-btn').disabled = false
     $('new-item-btn').disabled = false
     $('export-json').disabled = false
     $('export-csv').disabled = false
     await loadPage(true)
+    updateAttrSuggestions()
   } catch (err) {
     $('status').textContent = 'Error: ' + err.message
   }
@@ -180,8 +194,10 @@ async function loadPage(reset) {
         conditions: activeConditions(),
         limit: pageSize(),
         cursor,
+        strategy: state.override,
       })
       state.mode = data.mode || ''
+      state.strategy = { mode: data.mode || '', index: data.index || '' }
     } else {
       data = await window.api.scan(state.currentTable, cursor, pageSize())
       state.mode = ''
@@ -200,6 +216,8 @@ async function loadPage(reset) {
     $('more-btn').disabled = !state.cursor
     updateStatus()
     renderGrid()
+    renderStrategyBar()
+    updateAttrSuggestions()
   } catch (err) {
     $('status').textContent = 'Error: ' + err.message
     $('more-btn').disabled = !state.cursor
@@ -229,7 +247,10 @@ function renderFilterRows() {
     nameIn.type = 'text'
     nameIn.placeholder = 'attribute'
     nameIn.value = cond.name
+    nameIn.setAttribute('list', 'attr-suggestions')
+    nameIn.autocomplete = 'off'
     nameIn.addEventListener('input', () => { state.conditions[i].name = nameIn.value })
+    nameIn.addEventListener('keydown', filterKeydown)
 
     const opSel = document.createElement('select')
     OPERATORS.forEach((o) => {
@@ -245,7 +266,9 @@ function renderFilterRows() {
     valIn.type = 'text'
     valIn.placeholder = 'value'
     valIn.value = cond.value
+    valIn.autocomplete = 'off'
     valIn.addEventListener('input', () => { state.conditions[i].value = valIn.value })
+    valIn.addEventListener('keydown', filterKeydown)
 
     const rm = document.createElement('button')
     rm.textContent = '✕'
@@ -282,6 +305,7 @@ function toggleFilter() {
 
 async function applyFilter() {
   state.filterActive = activeConditions().length > 0
+  state.override = { mode: 'auto', index: '' }
   state.cursor = ''
   await loadPage(true)
 }
@@ -289,9 +313,155 @@ async function applyFilter() {
 async function clearFilter() {
   state.conditions = []
   state.filterActive = false
+  state.override = { mode: 'auto', index: '' }
   renderFilterRows()
+  hide($('filter-strategy'))
   state.cursor = ''
   await loadPage(true)
+}
+
+function filterKeydown(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    applyFilter()
+  }
+}
+
+function buildIndexList(info) {
+  const list = []
+  if (info.PartitionKey) {
+    list.push({ name: '', kind: 'table', pk: info.PartitionKey, sk: info.SortKey || '' })
+  }
+  ;(info.GSIs || []).forEach((g) => {
+    list.push({ name: g.Name, kind: 'gsi', pk: g.PartitionKey || '', sk: g.SortKey || '' })
+  })
+  ;(info.LSIs || []).forEach((l) => {
+    list.push({ name: l.Name, kind: 'lsi', pk: l.PartitionKey || '', sk: l.SortKey || '' })
+  })
+  return list
+}
+
+function updateAttrSuggestions() {
+  const names = new Set()
+  state.indexes.forEach((ix) => {
+    if (ix.pk) names.add(ix.pk)
+    if (ix.sk) names.add(ix.sk)
+  })
+  state.items.forEach((it) => Object.keys(it).forEach((k) => names.add(k)))
+  const dl = $('attr-suggestions')
+  dl.innerHTML = ''
+  ;[...names].sort().forEach((n) => {
+    const opt = document.createElement('option')
+    opt.value = n
+    dl.appendChild(opt)
+  })
+}
+
+const DATE_NAME_RE = /(_at$|date|time|timestamp|created|updated|modified)/i
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}/
+
+function isDateColumn(col) {
+  if (DATE_NAME_RE.test(col)) return true
+  let sawValue = false
+  for (const it of state.items) {
+    const v = it[col]
+    if (v === null || v === undefined || v === '') continue
+    sawValue = true
+    if (typeof v !== 'string' || !ISO_DATE_RE.test(v)) return false
+  }
+  return sawValue
+}
+
+function firstDirFor(col) {
+  return isDateColumn(col) ? 'desc' : 'asc'
+}
+
+function onHeaderClick(col) {
+  if (state.sort.column === col) {
+    state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc'
+  } else {
+    state.sort.column = col
+    state.sort.dir = firstDirFor(col)
+  }
+  renderGrid()
+}
+
+function compareValues(a, b, dateCol) {
+  const am = a === null || a === undefined || a === ''
+  const bm = b === null || b === undefined || b === ''
+  if (am && bm) return 0
+  if (am) return 1
+  if (bm) return -1
+  if (typeof a === 'number' && typeof b === 'number') return a - b
+  if (dateCol) {
+    const at = Date.parse(a), bt = Date.parse(b)
+    if (!isNaN(at) && !isNaN(bt)) return at - bt
+  }
+  return String(cellText(a)).localeCompare(String(cellText(b)))
+}
+
+function sortedItems() {
+  const col = state.sort.column
+  const dateCol = isDateColumn(col)
+  const sign = state.sort.dir === 'asc' ? 1 : -1
+  return state.items.slice().sort((x, y) => compareValues(x[col], y[col], dateCol) * sign)
+}
+
+function strategyTarget() {
+  if (state.strategy.mode === 'scan') return { kind: 'scan' }
+  if (state.strategy.index) return { kind: 'gsi', name: state.strategy.index }
+  return { kind: 'table' }
+}
+
+function viableIndexes() {
+  const eqAttrs = new Set(
+    activeConditions().filter((c) => c.op === 'eq').map((c) => c.name)
+  )
+  return state.indexes.filter((ix) => (ix.kind === 'table' || ix.kind === 'gsi') && ix.pk && eqAttrs.has(ix.pk))
+}
+
+function renderStrategyBar() {
+  const bar = $('filter-strategy')
+  if (!state.filterActive || !state.strategy.mode) {
+    hide(bar)
+    return
+  }
+  bar.innerHTML = ''
+  const target = strategyTarget()
+  const label = document.createElement('span')
+  label.className = 'strategy-label'
+  let text = 'Strategy: '
+  if (target.kind === 'scan') text += 'SCAN'
+  else if (target.kind === 'gsi') text += 'QUERY · index: ' + target.name
+  else text += 'QUERY · table'
+  if (state.override.mode === 'auto') text += ' (auto)'
+  label.textContent = text
+  bar.appendChild(label)
+
+  const addBtn = (caption, override) => {
+    const b = document.createElement('button')
+    b.className = 'strategy-override'
+    b.textContent = caption
+    b.addEventListener('click', () => {
+      state.override = override
+      state.cursor = ''
+      loadPage(true)
+    })
+    bar.appendChild(b)
+  }
+
+  viableIndexes().forEach((ix) => {
+    if (ix.kind === 'gsi' && target.name !== ix.name) {
+      addBtn('Use ' + ix.name + ' instead', { mode: 'query', index: ix.name })
+    }
+    if (ix.kind === 'table' && target.kind !== 'table') {
+      addBtn('Use Table instead', { mode: 'query', index: '' })
+    }
+  })
+  if (target.kind !== 'scan') {
+    addBtn('Use Scan instead', { mode: 'scan', index: '' })
+  }
+  show(bar)
 }
 
 function columnOrder() {
@@ -317,15 +487,22 @@ function renderGrid() {
   thead.innerHTML = ''
   tbody.innerHTML = ''
 
+  const view = (state.sort.column && cols.includes(state.sort.column)) ? sortedItems() : state.items
+  state.rendered = view
+
   const hr = document.createElement('tr')
   cols.forEach((c) => {
     const th = document.createElement('th')
-    th.textContent = c
+    let label = c
+    if (state.sort.column === c) label += state.sort.dir === 'asc' ? ' ▲' : ' ▼'
+    th.textContent = label
+    th.className = 'sortable'
+    th.addEventListener('click', () => onHeaderClick(c))
     hr.appendChild(th)
   })
   thead.appendChild(hr)
 
-  state.items.forEach((item, idx) => {
+  view.forEach((item, idx) => {
     const tr = document.createElement('tr')
     cols.forEach((c) => {
       const td = document.createElement('td')
@@ -387,9 +564,10 @@ function openDetail(title, text, withEditDelete) {
 }
 
 function showItem(idx) {
+  const item = state.rendered[idx]
   state.selectedIdx = idx
-  state.selectedItem = state.items[idx]
-  openDetail('Item', JSON.stringify(state.items[idx], null, 2), true)
+  state.selectedItem = item
+  openDetail('Item', JSON.stringify(item, null, 2), true)
 }
 
 function showSchema() {
