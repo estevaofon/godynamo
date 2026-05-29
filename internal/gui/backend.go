@@ -7,7 +7,7 @@ import (
 	"github.com/godynamo/internal/dynamo"
 )
 
-// Backend is the narrow set of read-only DynamoDB operations the bridge needs.
+// Backend is the set of DynamoDB operations the bridge needs (reads + writes).
 // *dynamo.Client satisfies this interface; tests supply a fake.
 type Backend interface {
 	ListTables(ctx context.Context) ([]string, error)

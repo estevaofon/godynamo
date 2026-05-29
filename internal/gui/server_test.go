@@ -99,6 +99,9 @@ func TestCORSPreflight(t *testing.T) {
 	if rec.Header().Get("Access-Control-Allow-Origin") == "" {
 		t.Fatal("missing CORS allow-origin header")
 	}
+	if !strings.Contains(rec.Header().Get("Access-Control-Allow-Methods"), "DELETE") {
+		t.Fatalf("CORS methods must allow DELETE, got %q", rec.Header().Get("Access-Control-Allow-Methods"))
+	}
 }
 
 func TestListTablesSorted(t *testing.T) {
