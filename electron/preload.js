@@ -32,8 +32,12 @@ contextBridge.exposeInMainWorld('api', {
   connect: (cfg) => call('POST', '/connect', cfg),
   listTables: () => call('GET', '/tables'),
   schema: (name) => call('GET', `/tables/${encodeURIComponent(name)}/schema`),
-  scan: (name, cursor) => {
-    const q = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
-    return call('GET', `/tables/${encodeURIComponent(name)}/scan${q}`)
+  scan: (name, cursor, limit) => {
+    const params = new URLSearchParams()
+    if (cursor) params.set('cursor', cursor)
+    if (limit) params.set('limit', String(limit))
+    const qs = params.toString()
+    return call('GET', `/tables/${encodeURIComponent(name)}/scan${qs ? '?' + qs : ''}`)
   },
+  query: (name, body) => call('POST', `/tables/${encodeURIComponent(name)}/query`, body),
 })

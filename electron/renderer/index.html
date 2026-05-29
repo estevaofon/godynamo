@@ -36,10 +36,29 @@
     <main id="content">
       <header id="toolbar">
         <span id="current-table"></span>
+        <button id="filter-btn" disabled>Filter</button>
         <button id="schema-btn" disabled>Schema</button>
-        <button id="more-btn" disabled>Load more</button>
+        <label id="pagesize-label">Page size
+          <select id="page-size">
+            <option>50</option>
+            <option>100</option>
+            <option>300</option>
+            <option selected>500</option>
+            <option>1000</option>
+          </select>
+        </label>
+        <button id="more-btn" disabled>Resume fetching</button>
+        <span id="mode-badge"></span>
         <span id="status"></span>
       </header>
+      <section id="filter-panel" class="hidden">
+        <div id="filter-rows"></div>
+        <div id="filter-actions">
+          <button id="filter-add">+ Condition</button>
+          <button id="filter-apply">Apply</button>
+          <button id="filter-clear">Clear</button>
+        </div>
+      </section>
       <div id="grid-wrap">
         <table id="grid"><thead></thead><tbody></tbody></table>
       </div>

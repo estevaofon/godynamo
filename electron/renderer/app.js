@@ -6,6 +6,20 @@ const AWS_REGIONS = [
   'eu-south-1','eu-south-2','eu-north-1','il-central-1','me-south-1','me-central-1','sa-east-1',
 ]
 
+const OPERATORS = [
+  { op: 'eq', label: '= Equals' },
+  { op: 'ne', label: '≠ Not Equals' },
+  { op: 'gt', label: '> Greater Than' },
+  { op: 'lt', label: '< Less Than' },
+  { op: 'ge', label: '≥ Greater or Equal' },
+  { op: 'le', label: '≤ Less or Equal' },
+  { op: 'contains', label: '∋ Contains' },
+  { op: 'not_contains', label: '∌ Not Contains' },
+  { op: 'begins_with', label: '^ Begins With' },
+  { op: 'exists', label: '∃ Exists' },
+  { op: 'not_exists', label: '∄ Not Exists' },
+]
+
 const state = {
   tables: [],
   currentTable: null,
@@ -13,6 +27,10 @@ const state = {
   schemaRaw: '',
   cursor: '',
   items: [],
+  conditions: [],
+  filterActive: false,
+  mode: '',
+  scanned: 0,
 }
 
 const $ = (id) => document.getElementById(id)
@@ -77,10 +95,18 @@ async function selectTable(name) {
   state.currentTable = name
   state.cursor = ''
   state.items = []
+  state.conditions = []
+  state.filterActive = false
+  state.mode = ''
+  state.scanned = 0
   $('current-table').textContent = name
   $('status').textContent = 'Loading…'
+  $('mode-badge').textContent = ''
   $('schema-btn').disabled = true
+  $('filter-btn').disabled = true
   $('more-btn').disabled = true
+  hide($('filter-panel'))
+  renderFilterRows()
   renderTableList()
   try {
     const schema = await window.api.schema(name)
@@ -90,25 +116,138 @@ async function selectTable(name) {
     }
     state.schemaRaw = schema.rawJSON || JSON.stringify(schema.info, null, 2)
     $('schema-btn').disabled = false
+    $('filter-btn').disabled = false
     await loadPage(true)
   } catch (err) {
     $('status').textContent = 'Error: ' + err.message
   }
 }
 
+function pageSize() {
+  return parseInt($('page-size').value, 10) || 500
+}
+
+function activeConditions() {
+  return state.conditions
+    .filter((c) => c.name.trim() !== '')
+    .map((c) => ({ name: c.name, op: c.op, value: c.value }))
+}
+
 async function loadPage(reset) {
+  const cursor = reset ? '' : state.cursor
   try {
-    const data = await window.api.scan(state.currentTable, reset ? '' : state.cursor)
+    let data
+    if (state.filterActive) {
+      data = await window.api.query(state.currentTable, {
+        conditions: activeConditions(),
+        limit: pageSize(),
+        cursor,
+      })
+      state.mode = data.mode || ''
+      state.scanned = data.scannedCount || 0
+    } else {
+      data = await window.api.scan(state.currentTable, cursor, pageSize())
+      state.mode = ''
+      state.scanned = 0
+    }
     if (reset) state.items = []
     state.items = state.items.concat(data.items || [])
     state.cursor = data.cursor || ''
     $('more-btn').disabled = !state.cursor
-    $('status').textContent = `${state.items.length} items` + (state.cursor ? ' (more available)' : '')
+    updateStatus()
     renderGrid()
   } catch (err) {
     $('status').textContent = 'Error: ' + err.message
     $('more-btn').disabled = !state.cursor
   }
+}
+
+function updateStatus() {
+  let s = `${state.items.length} returned`
+  if (state.filterActive) {
+    s += ` · scanned ${state.scanned}`
+    $('mode-badge').textContent = state.mode ? state.mode.toUpperCase() : ''
+  } else {
+    $('mode-badge').textContent = ''
+  }
+  if (state.cursor) s += ' · more available'
+  $('status').textContent = s
+}
+
+function renderFilterRows() {
+  const wrap = $('filter-rows')
+  wrap.innerHTML = ''
+  state.conditions.forEach((cond, i) => {
+    const row = document.createElement('div')
+    row.className = 'filter-row'
+
+    const nameIn = document.createElement('input')
+    nameIn.type = 'text'
+    nameIn.placeholder = 'attribute'
+    nameIn.value = cond.name
+    nameIn.addEventListener('input', () => { state.conditions[i].name = nameIn.value })
+
+    const opSel = document.createElement('select')
+    OPERATORS.forEach((o) => {
+      const opt = document.createElement('option')
+      opt.value = o.op
+      opt.textContent = o.label
+      if (o.op === cond.op) opt.selected = true
+      opSel.appendChild(opt)
+    })
+    opSel.addEventListener('change', () => { state.conditions[i].op = opSel.value })
+
+    const valIn = document.createElement('input')
+    valIn.type = 'text'
+    valIn.placeholder = 'value'
+    valIn.value = cond.value
+    valIn.addEventListener('input', () => { state.conditions[i].value = valIn.value })
+
+    const rm = document.createElement('button')
+    rm.textContent = '✕'
+    rm.className = 'filter-remove'
+    rm.addEventListener('click', () => removeCondition(i))
+
+    row.appendChild(nameIn)
+    row.appendChild(opSel)
+    row.appendChild(valIn)
+    row.appendChild(rm)
+    wrap.appendChild(row)
+  })
+}
+
+function addCondition() {
+  state.conditions.push({ name: '', op: 'eq', value: '' })
+  renderFilterRows()
+}
+
+function removeCondition(i) {
+  state.conditions.splice(i, 1)
+  renderFilterRows()
+}
+
+function toggleFilter() {
+  const panel = $('filter-panel')
+  if (panel.classList.contains('hidden')) {
+    if (state.conditions.length === 0) addCondition()
+    show(panel)
+  } else {
+    hide(panel)
+  }
+}
+
+async function applyFilter() {
+  state.filterActive = activeConditions().length > 0
+  state.cursor = ''
+  await loadPage(true)
+}
+
+async function clearFilter() {
+  state.conditions = []
+  state.filterActive = false
+  renderFilterRows()
+  state.cursor = ''
+  await loadPage(true)
 }
 
 function columnOrder() {
@@ -171,6 +310,11 @@ window.addEventListener('DOMContentLoaded', () => {
   initConnectScreen()
   $('table-filter').addEventListener('input', renderTableList)
   $('schema-btn').addEventListener('click', showSchema)
+  $('filter-btn').addEventListener('click', toggleFilter)
+  $('filter-add').addEventListener('click', addCondition)
+  $('filter-apply').addEventListener('click', applyFilter)
+  $('filter-clear').addEventListener('click', clearFilter)
   $('more-btn').addEventListener('click', () => loadPage(false))
+  $('page-size').addEventListener('change', () => { if (state.currentTable) loadPage(true) })
   $('detail-close').addEventListener('click', () => hide($('detail')))
 })
