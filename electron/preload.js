@@ -29,19 +29,23 @@ async function call(method, pathName, body) {
 
 // The token is captured in this closure and never placed on window or in a URL.
 contextBridge.exposeInMainWorld('api', {
-  connect: (cfg) => call('POST', '/connect', cfg),
-  listTables: () => call('GET', '/tables'),
-  schema: (name) => call('GET', `/tables/${encodeURIComponent(name)}/schema`),
-  scan: (name, cursor, limit) => {
-    const params = new URLSearchParams()
+  listProfiles: () => call('GET', '/profiles'),
+  discover: (profile) => call('POST', '/discover', { profile }),
+  schema: (name, region) =>
+    call('GET', `/tables/${encodeURIComponent(name)}/schema?region=${encodeURIComponent(region)}`),
+  scan: (name, region, cursor, limit) => {
+    const params = new URLSearchParams({ region })
     if (cursor) params.set('cursor', cursor)
     if (limit) params.set('limit', String(limit))
-    const qs = params.toString()
-    return call('GET', `/tables/${encodeURIComponent(name)}/scan${qs ? '?' + qs : ''}`)
+    return call('GET', `/tables/${encodeURIComponent(name)}/scan?${params.toString()}`)
   },
-  query: (name, body) => call('POST', `/tables/${encodeURIComponent(name)}/query`, body),
-  saveItem: (name, json) => call('POST', `/tables/${encodeURIComponent(name)}/item`, { json }),
-  deleteItem: (name, json) => call('DELETE', `/tables/${encodeURIComponent(name)}/item`, { json }),
-  createTable: (form) => call('POST', '/tables', form),
+  query: (name, region, body) =>
+    call('POST', `/tables/${encodeURIComponent(name)}/query?region=${encodeURIComponent(region)}`, body),
+  saveItem: (name, region, json) =>
+    call('POST', `/tables/${encodeURIComponent(name)}/item?region=${encodeURIComponent(region)}`, { json }),
+  deleteItem: (name, region, json) =>
+    call('DELETE', `/tables/${encodeURIComponent(name)}/item?region=${encodeURIComponent(region)}`, { json }),
+  createTable: (form, region) =>
+    call('POST', `/tables?region=${encodeURIComponent(region)}`, form),
   exportFile: (defaultName, content) => ipcRenderer.invoke('export-file', { defaultName, content }),
 })
