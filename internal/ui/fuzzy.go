@@ -3,7 +3,6 @@ package ui
 import (
 	"sort"
 	"strings"
-	"unicode"
 )
 
 // FuzzyMatch represents a fuzzy match result
@@ -91,10 +90,6 @@ func fuzzyScore(pattern, text string) (int, []int) {
 				prevChar := textRunes[textIdx-1]
 				if prevChar == '_' || prevChar == '-' || prevChar == ' ' || prevChar == '.' {
 					score += 20
-				}
-				// Bonus for camelCase match
-				if unicode.IsLower(prevChar) && unicode.IsUpper(rune(text[textIdx])) {
-					score += 15
 				}
 			}
 
