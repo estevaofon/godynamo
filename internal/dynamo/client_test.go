@@ -20,6 +20,7 @@ type fakeAPI struct {
 	scanCalls int
 	scanErr   error
 	query     *dynamodb.QueryOutput
+	queryErr  error
 	getOut    *dynamodb.GetItemOutput
 	putErr    error
 	delErr    error
@@ -51,7 +52,7 @@ func (f *fakeAPI) Scan(_ context.Context, in *dynamodb.ScanInput, _ ...func(*dyn
 }
 func (f *fakeAPI) Query(_ context.Context, in *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
 	f.lastQuery = in
-	return f.query, nil
+	return f.query, f.queryErr
 }
 func (f *fakeAPI) PutItem(_ context.Context, in *dynamodb.PutItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
 	f.lastPut = in
@@ -71,6 +72,29 @@ func (f *fakeAPI) GetItem(_ context.Context, _ *dynamodb.GetItemInput, _ ...func
 
 func newTestClient(f *fakeAPI) *Client {
 	return &Client{db: f, region: "us-east-1"}
+}
+
+func TestScanTablePropagatesError(t *testing.T) {
+	f := &fakeAPI{scanErr: errors.New("boom")}
+	if _, err := newTestClient(f).ScanTable(context.Background(), "T", 10, nil, "", nil, nil); err == nil {
+		t.Fatal("ScanTable should propagate the SDK error")
+	}
+}
+
+func TestScanTableContinuousPropagatesError(t *testing.T) {
+	f := &fakeAPI{scanErr: errors.New("boom")}
+	if _, err := newTestClient(f).ScanTableContinuous(context.Background(), "T", 10, nil, "", nil, nil); err == nil {
+		t.Fatal("ScanTableContinuous should propagate a non-cancellation SDK error")
+	}
+}
+
+func TestQueryTablePropagatesError(t *testing.T) {
+	f := &fakeAPI{queryErr: errors.New("boom")}
+	if _, err := newTestClient(f).QueryTable(context.Background(), QueryInput{
+		TableName: "T", KeyConditionExpression: "#a = :v",
+	}); err == nil {
+		t.Fatal("QueryTable should propagate the SDK error")
+	}
 }
 
 func TestListTablesPaginates(t *testing.T) {

@@ -144,7 +144,8 @@ func DiscoverRegionsWithTables(ctx context.Context, profile string, useLocal boo
 }
 
 // dynamoAPI is the subset of *dynamodb.Client that Client depends on, extracted
-// so tests can inject a fake and NEVER touch real AWS. Mirrors gui.Backend.
+// so tests can inject a fake and NEVER touch real AWS. Analogous to gui.Backend,
+// but at the raw-SDK level (gui.Backend wraps Client's high-level methods).
 type dynamoAPI interface {
 	ListTables(context.Context, *dynamodb.ListTablesInput, ...func(*dynamodb.Options)) (*dynamodb.ListTablesOutput, error)
 	DescribeTable(context.Context, *dynamodb.DescribeTableInput, ...func(*dynamodb.Options)) (*dynamodb.DescribeTableOutput, error)
