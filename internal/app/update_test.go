@@ -11,9 +11,19 @@ import (
 
 // drive feeds one message through Update and returns the updated Model.
 // The returned tea.Cmd is intentionally DISCARDED and never executed.
+//
+// Update returns tea.Model that is sometimes a Model value (message paths like
+// WindowSize/errMsg) and sometimes a *Model (the pointer-receiver per-view key
+// handlers such as updateTableData). Normalize both to a Model value.
 func drive(m Model, msg tea.Msg) Model {
-	updated, _ := m.Update(msg)
-	return updated.(Model)
+	switch v, _ := m.Update(msg); model := v.(type) {
+	case Model:
+		return model
+	case *Model:
+		return *model
+	default:
+		return m
+	}
 }
 
 func TestUpdateWindowSizeSetsDimensions(t *testing.T) {
