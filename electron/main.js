@@ -10,6 +10,7 @@ function createWindow() {
     width: 1200,
     height: 800,
     title: 'GoDynamo',
+    icon: path.join(__dirname, 'icon.ico'),
     backgroundColor: '#0b0f1a',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
