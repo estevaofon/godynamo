@@ -2,6 +2,7 @@ package models
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -141,5 +142,72 @@ func TestFormatValue(t *testing.T) {
 				t.Fatalf("got %q want %q", got, c.want)
 			}
 		})
+	}
+}
+
+func TestNewItem(t *testing.T) {
+	raw := map[string]types.AttributeValue{
+		"id": &types.AttributeValueMemberS{Value: "1"},
+		"n":  &types.AttributeValueMemberN{Value: "5"},
+	}
+	item := NewItem(raw)
+	if item.Attributes["id"] != "1" || item.Attributes["n"] != int64(5) {
+		t.Fatalf("attrs=%#v", item.Attributes)
+	}
+	if !reflect.DeepEqual(item.Raw, raw) {
+		t.Fatal("raw not preserved")
+	}
+}
+
+func TestAttributeValueToInterfaceBinaryAndSets(t *testing.T) {
+	if got := AttributeValueToInterface(&types.AttributeValueMemberB{Value: []byte{1, 2}}); !reflect.DeepEqual(got, []byte{1, 2}) {
+		t.Errorf("B: got %#v", got)
+	}
+	if got := AttributeValueToInterface(&types.AttributeValueMemberNS{Value: []string{"1", "2"}}); !reflect.DeepEqual(got, []float64{1, 2}) {
+		t.Errorf("NS: got %#v", got)
+	}
+	if got := AttributeValueToInterface(&types.AttributeValueMemberBS{Value: [][]byte{{1}}}); !reflect.DeepEqual(got, [][]byte{{1}}) {
+		t.Errorf("BS: got %#v", got)
+	}
+}
+
+func TestInterfaceToAttributeValueListMapBytes(t *testing.T) {
+	got := InterfaceToAttributeValue([]interface{}{"a", int64(1)})
+	if l, ok := got.(*types.AttributeValueMemberL); !ok || len(l.Value) != 2 {
+		t.Fatalf("list: %#v", got)
+	}
+	got = InterfaceToAttributeValue(map[string]interface{}{"k": "v"})
+	if m, ok := got.(*types.AttributeValueMemberM); !ok || len(m.Value) != 1 {
+		t.Fatalf("map: %#v", got)
+	}
+	got = InterfaceToAttributeValue([]byte{1, 2})
+	if b, ok := got.(*types.AttributeValueMemberB); !ok || len(b.Value) != 2 {
+		t.Fatalf("bytes: %#v", got)
+	}
+}
+
+func TestJSONToItemInvalid(t *testing.T) {
+	if _, err := JSONToItem("{not json"); err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestItemToJSONIndented(t *testing.T) {
+	item := map[string]types.AttributeValue{"id": &types.AttributeValueMemberS{Value: "1"}}
+	got, err := ItemToJSON(item, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "\n") {
+		t.Fatalf("indented output should contain a newline: %q", got)
+	}
+}
+
+func TestFormatValueNonStringMarshals(t *testing.T) {
+	if got := FormatValue(&types.AttributeValueMemberN{Value: "42"}, 0); got != "42" {
+		t.Fatalf("number format: %q", got)
+	}
+	if got := FormatValue(&types.AttributeValueMemberBOOL{Value: true}, 0); got != "true" {
+		t.Fatalf("bool format: %q", got)
 	}
 }
