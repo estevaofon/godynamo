@@ -257,7 +257,7 @@ function renderSidebar() {
     const head = document.createElement('li')
     head.className = 'region-head'
     head.textContent = (expanded ? '▾ ' : '▸ ') + rg.region + ' (' + rg.tables.length + ')'
-    head.addEventListener('click', () => { rg.expanded = !rg.expanded; renderSidebar() })
+    head.addEventListener('click', () => { rg.expanded = !expanded; renderSidebar() })
     ul.appendChild(head)
     if (!expanded) return
 
