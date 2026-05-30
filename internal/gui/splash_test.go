@@ -37,3 +37,12 @@ func TestSplashScriptContainsMarkers(t *testing.T) {
 		}
 	}
 }
+
+func TestSplashScriptEscapesSingleQuotes(t *testing.T) {
+	// A single quote in the message must be doubled so it can't break out of the
+	// PowerShell single-quoted string literal it is embedded in.
+	s := splashScript("it's")
+	if !strings.Contains(s, "it''s") {
+		t.Errorf("splashScript should escape ' as '' (it's -> it''s); got:\n%s", s)
+	}
+}

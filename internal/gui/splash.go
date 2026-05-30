@@ -10,12 +10,6 @@ import (
 	"unicode/utf16"
 )
 
-// startSplash shows a "please wait" indicator during the one-time Electron
-// install and returns a function that dismisses it. It is a package variable so
-// tests can swap it out. See defaultStartSplash for the real behavior.
-//
-// (The variable itself is declared in install.go alongside the other seams.)
-
 // defaultStartSplash pops a native WinForms window on Windows (via PowerShell)
 // and returns a closer that kills it. On other OSes — or if PowerShell can't be
 // started — it degrades to a single stderr line with the same signature.
@@ -31,9 +25,7 @@ func defaultStartSplash(message string) func() {
 		return func() {}
 	}
 	return func() {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill() // closes the window when the install finishes
-		}
+		_ = cmd.Process.Kill() // closes the window when the install finishes
 	}
 }
 
