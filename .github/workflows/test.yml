@@ -1,0 +1,38 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            race: "-race"
+          - os: windows-latest
+            race: ""
+    runs-on: ${{ matrix.os }}
+    env:
+      # SAFETY: guarantee no AWS credentials exist in CI. If a test ever tries to
+      # reach AWS it fails on missing creds instead of hitting a real account.
+      AWS_ACCESS_KEY_ID: ""
+      AWS_SECRET_ACCESS_KEY: ""
+      AWS_SESSION_TOKEN: ""
+      AWS_PROFILE: ""
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./... ${{ matrix.race }} -coverprofile=coverage.out
