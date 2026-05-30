@@ -32,6 +32,13 @@ func AttributeValueToInterface(av types.AttributeValue) interface{} {
 	case *types.AttributeValueMemberS:
 		return v.Value
 	case *types.AttributeValueMemberN:
+		// Parse as integer first so values between 2^53 and 2^63 keep full
+		// precision (ParseFloat would round them). Fall back to float for
+		// decimals, preserving the "whole number → int64" display contract,
+		// then to the raw string if it isn't numeric at all.
+		if i, err := strconv.ParseInt(v.Value, 10, 64); err == nil {
+			return i
+		}
 		if f, err := strconv.ParseFloat(v.Value, 64); err == nil {
 			if f == float64(int64(f)) {
 				return int64(f)
@@ -189,8 +196,12 @@ func FormatValue(av types.AttributeValue, maxLen int) string {
 		str = string(jsonBytes)
 	}
 
-	if maxLen > 0 && len(str) > maxLen {
-		return str[:maxLen-3] + "..."
+	runes := []rune(str)
+	if maxLen > 0 && len(runes) > maxLen {
+		if maxLen <= 3 {
+			return string(runes[:maxLen]) // no room for an ellipsis
+		}
+		return string(runes[:maxLen-3]) + "..."
 	}
 	return str
 }
