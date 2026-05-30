@@ -143,9 +143,26 @@ func DiscoverRegionsWithTables(ctx context.Context, profile string, useLocal boo
 	return results, nil
 }
 
+// dynamoAPI is the subset of *dynamodb.Client that Client depends on, extracted
+// so tests can inject a fake and NEVER touch real AWS. Mirrors gui.Backend.
+type dynamoAPI interface {
+	ListTables(context.Context, *dynamodb.ListTablesInput, ...func(*dynamodb.Options)) (*dynamodb.ListTablesOutput, error)
+	DescribeTable(context.Context, *dynamodb.DescribeTableInput, ...func(*dynamodb.Options)) (*dynamodb.DescribeTableOutput, error)
+	Scan(context.Context, *dynamodb.ScanInput, ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
+	Query(context.Context, *dynamodb.QueryInput, ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
+	PutItem(context.Context, *dynamodb.PutItemInput, ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
+	DeleteItem(context.Context, *dynamodb.DeleteItemInput, ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
+	CreateTable(context.Context, *dynamodb.CreateTableInput, ...func(*dynamodb.Options)) (*dynamodb.CreateTableOutput, error)
+	GetItem(context.Context, *dynamodb.GetItemInput, ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
+}
+
+// Compile-time guarantee that the real client satisfies the seam (fails fast if
+// an SDK upgrade changes a signature).
+var _ dynamoAPI = (*dynamodb.Client)(nil)
+
 // Client wraps the DynamoDB client with helper methods
 type Client struct {
-	db       *dynamodb.Client
+	db       dynamoAPI
 	endpoint string
 	region   string
 }
