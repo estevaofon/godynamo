@@ -16,6 +16,14 @@ import (
 // It blocks until the Electron window is closed or the process is interrupted.
 // args is reserved for future flag parsing (e.g., --port); it is currently unused.
 func Run(args []string) error {
+	dir, err := electronAppDir()
+	if err != nil {
+		return err
+	}
+	if err := ensureElectron(dir); err != nil {
+		return err
+	}
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("failed to bind loopback port: %w", err)
@@ -41,7 +49,7 @@ func Run(args []string) error {
 
 	fmt.Printf("GoDynamo GUI bridge listening on http://127.0.0.1:%d\n", port)
 
-	electron, err := startElectron(port, token)
+	electron, err := startElectron(dir, port, token)
 	if err != nil {
 		return err
 	}

@@ -40,3 +40,20 @@ func TestElectronBinPath(t *testing.T) {
 		t.Fatalf("expected node_modules in path, got %q", got)
 	}
 }
+
+func TestStartElectronMissingBinaryMessage(t *testing.T) {
+	dir := t.TempDir() // no node_modules/.bin/electron under here
+	_, err := startElectron(dir, 0, "token")
+	if err == nil {
+		t.Fatal("want error when the Electron binary is missing")
+	}
+	if !strings.Contains(err.Error(), "not set up") {
+		t.Errorf("error %q should mention 'not set up'", err.Error())
+	}
+	if !strings.Contains(err.Error(), "re-run `godynamo`") {
+		t.Errorf("error %q should tell the user to re-run `godynamo`", err.Error())
+	}
+	if strings.Contains(err.Error(), "godynamo gui") {
+		t.Errorf("error %q should no longer reference `godynamo gui`", err.Error())
+	}
+}

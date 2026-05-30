@@ -8,19 +8,15 @@ import (
 	"runtime"
 )
 
-// startElectron locates the dev Electron binary and launches the app in ./electron,
-// passing the bridge port and token via environment variables (not argv, so the
-// token is not visible in process listings).
-func startElectron(port int, token string) (*exec.Cmd, error) {
-	dir, err := electronAppDir()
-	if err != nil {
-		return nil, err
-	}
+// startElectron launches the dev Electron app in dir, passing the bridge port
+// and token via environment variables (not argv, so the token is not visible in
+// process listings). dir is resolved by the caller (see Run).
+func startElectron(dir string, port int, token string) (*exec.Cmd, error) {
 	bin := electronBinPath(dir)
 	if _, statErr := os.Stat(bin); statErr != nil {
 		if os.IsNotExist(statErr) {
 			return nil, fmt.Errorf(
-				"Electron is not set up. Run:\n  cd %s\n  npm install\nthen re-run `godynamo gui`", dir)
+				"Electron is not set up. Run:\n  cd %s\n  npm install\nthen re-run `godynamo`", dir)
 		}
 		return nil, fmt.Errorf("checking Electron binary: %w", statErr)
 	}
