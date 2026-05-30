@@ -92,8 +92,12 @@ aws configure
 
 2. **Run GoDynamo**:
 ```bash
-./godynamo
+./godynamo        # opens the desktop GUI (default)
+./godynamo tui    # opens the terminal UI instead
 ```
+
+On first run, if the desktop GUI's Electron dependencies aren't installed yet,
+GoDynamo installs them automatically (showing a wait window) and then opens.
 
 3. **That's it!** GoDynamo will:
    - Detect your AWS credentials
@@ -106,9 +110,14 @@ aws configure
 
 GoDynamo ships an optional Electron desktop UI for **read-only** browsing
 (connect → list tables → scan/browse → inspect item JSON → view schema).
-The terminal UI remains the default; the GUI is launched with the `gui` subcommand.
+The desktop GUI is the default (`godynamo`); run `godynamo tui` for the terminal UI.
+`godynamo gui` still works as an explicit alias.
 
-### One-time setup (requires Node.js + npm)
+### Setup (automatic on first run)
+
+The first time you launch the GUI, GoDynamo runs `npm install` in `electron/`
+for you (showing a wait window) if it hasn't been done yet — you just need
+**Node.js + npm** on your PATH. To do it manually instead:
 
 ```bash
 cd electron
@@ -119,10 +128,11 @@ cd ..
 ### Launch
 
 ```bash
-go run . gui
+go run .            # GUI is the default
+go run . tui        # terminal UI instead
 # or, after building:
 go build -o godynamo.exe .
-./godynamo.exe gui
+./godynamo.exe      # GUI (use `./godynamo.exe tui` for the terminal UI)
 ```
 
 On launch you choose **AWS** (pick a region; uses your default credentials) or
