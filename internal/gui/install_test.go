@@ -102,3 +102,18 @@ func TestEnsureElectronInstallFails(t *testing.T) {
 		t.Fatal("splash must be closed even when install fails")
 	}
 }
+
+func TestEnsureElectronInstallSucceedsButBinaryMissing(t *testing.T) {
+	dir := t.TempDir()
+	swapLookNpm(t, func() (string, error) { return "npm", nil })
+	swapSplash(t, func(string) func() { return func() {} })
+	swapInstall(t, func(npm, d string) error { return nil }) // reports success but creates nothing
+
+	err := ensureElectron(dir)
+	if err == nil {
+		t.Fatal("want error when the binary is still missing after a 'successful' install")
+	}
+	if !strings.Contains(err.Error(), "still missing") {
+		t.Errorf("error %q should mention 'still missing'", err.Error())
+	}
+}

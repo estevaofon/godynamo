@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,7 +9,7 @@ import (
 )
 
 // Seams: swapped in tests so the install path runs without a real npm or window.
-// startSplash defaults to defaultStartSplash (defined in splash.go).
+// (defaultStartSplash lives in splash.go; the other defaults are below.)
 var (
 	lookNpm       = defaultLookNpm
 	runNpmInstall = defaultRunNpmInstall
@@ -24,7 +25,7 @@ func ensureElectron(dir string) error {
 	}
 	npm, err := lookNpm()
 	if err != nil {
-		return fmt.Errorf(
+		return errors.New(
 			"the desktop GUI needs Electron, but Node.js/npm was not found.\n" +
 				"Install Node.js (https://nodejs.org) and re-run `godynamo`,\n" +
 				"or use the terminal UI instead: `godynamo tui`")
@@ -34,8 +35,9 @@ func ensureElectron(dir string) error {
 	if err := runNpmInstall(npm, dir); err != nil {
 		return fmt.Errorf("installing Electron dependencies failed: %w", err)
 	}
-	if _, err := os.Stat(electronBinPath(dir)); err != nil {
-		return fmt.Errorf("Electron install finished but %s is still missing", electronBinPath(dir))
+	bin := electronBinPath(dir)
+	if _, err := os.Stat(bin); err != nil {
+		return fmt.Errorf("Electron install finished but %s is still missing", bin)
 	}
 	return nil
 }
