@@ -22,12 +22,12 @@ const OPERATORS = [
 
 const VALUE_OPS = new Set(['eq', 'ne', 'gt', 'lt', 'ge', 'le', 'contains', 'not_contains', 'begins_with'])
 
-const conn = { tables: [], tabs: [], activeId: null, nextId: 1 }
+const conn = { profile: '', profiles: [], regions: [], tabs: [], activeId: null, nextId: 1 }
 let state = null // alias to the active tab object, or null when no tab is open
 
-function newTab(name) {
+function newTab(name, region) {
   return {
-    id: conn.nextId++, currentTable: name,
+    id: conn.nextId++, currentTable: name, region,
     loaded: false, status: '', scrollTop: 0, filterOpen: false,
     keys: { partition: '', sort: '' }, indexes: [], schemaRaw: '',
     cursor: '', items: [], rendered: [],
@@ -56,10 +56,10 @@ function syncToolbar() {
   $('more-btn').disabled = !(state && state.cursor)
 }
 
-let ctxTable = null
+let ctxTarget = null
 
-function showContextMenu(x, y, name) {
-  ctxTable = name
+function showContextMenu(x, y, name, region) {
+  ctxTarget = { name, region }
   const menu = $('ctx-menu')
   menu.style.left = x + 'px'
   menu.style.top = y + 'px'
@@ -77,6 +77,7 @@ function renderTabs() {
     const label = document.createElement('span')
     label.className = 'tab-label'
     label.textContent = t.currentTable
+    el.title = t.currentTable + ' · ' + t.region
     el.appendChild(label)
     const close = document.createElement('button')
     close.className = 'tab-close'
@@ -89,13 +90,13 @@ function renderTabs() {
   })
 }
 
-function openTable(name, opts) {
+function openTable(name, region, opts) {
   const forceNew = !!(opts && opts.forceNew)
   if (!forceNew) {
-    const existing = conn.tabs.find((t) => t.currentTable === name)
+    const existing = conn.tabs.find((t) => t.currentTable === name && t.region === region)
     if (existing) { activate(existing.id); return }
   }
-  const tab = newTab(name)
+  const tab = newTab(name, region)
   conn.tabs.push(tab)
   activate(tab.id)
   loadTab(tab)
@@ -107,11 +108,11 @@ function activate(id) {
   hide($('detail'))
   hide($('editor'))
   hideContextMenu()
-  if (!state) { showEmptyState(); renderTabs(); renderTableList(); return }
+  if (!state) { showEmptyState(); renderTabs(); renderSidebar(); return }
   show($('grid-wrap'))
   hide($('content-empty'))
   renderTabs()
-  renderTableList()
+  renderSidebar()
   renderFilterRows()
   if (state.filterOpen) show($('filter-panel')); else hide($('filter-panel'))
   renderStrategyBar()
@@ -131,7 +132,7 @@ async function loadTab(tab) {
   tab.status = 'Loading…'
   if (tab.id === conn.activeId) $('status').textContent = tab.status
   try {
-    const schema = await window.api.schema(tab.currentTable)
+    const schema = await window.api.schema(tab.currentTable, tab.region)
     const info = schema.info || {}
     tab.keys = { partition: info.PartitionKey || '', sort: info.SortKey || '' }
     tab.indexes = buildIndexList(info)
@@ -152,10 +153,10 @@ function closeTab(id) {
   if (conn.activeId === id) {
     const next = conn.tabs[i] || conn.tabs[i - 1]
     if (next) { activate(next.id) }
-    else { conn.activeId = null; state = null; hide($('detail')); hide($('editor')); showEmptyState(); renderTabs(); renderTableList() }
+    else { conn.activeId = null; state = null; hide($('detail')); hide($('editor')); showEmptyState(); renderTabs(); renderSidebar() }
   } else {
     renderTabs()
-    renderTableList()
+    renderSidebar()
   }
 }
 
@@ -163,93 +164,118 @@ const $ = (id) => document.getElementById(id)
 const show = (el) => el.classList.remove('hidden')
 const hide = (el) => el.classList.add('hidden')
 
-function initConnectScreen() {
-  const regionSel = $('region')
+function populateRegionPicker() {
+  const sel = $('ct-region')
+  sel.innerHTML = ''
   AWS_REGIONS.forEach((r) => {
     const opt = document.createElement('option')
     opt.value = r
     opt.textContent = r
-    regionSel.appendChild(opt)
+    sel.appendChild(opt)
   })
-  document.querySelectorAll('input[name="mode"]').forEach((radio) => {
-    radio.addEventListener('change', () => {
-      const mode = document.querySelector('input[name="mode"]:checked').value
-      if (mode === 'aws') { show($('aws-fields')); hide($('local-fields')) }
-      else { hide($('aws-fields')); show($('local-fields')) }
-    })
-  })
-  $('connect-btn').addEventListener('click', onConnect)
 }
 
-async function onConnect() {
-  const mode = document.querySelector('input[name="mode"]:checked').value
-  const cfg = { mode }
-  if (mode === 'aws') cfg.region = $('region').value
-  else cfg.endpoint = $('endpoint').value
+function renderProfileSelect(selected) {
+  const sel = $('profile-select')
+  sel.innerHTML = ''
+  conn.profiles.forEach((p) => {
+    const opt = document.createElement('option')
+    opt.value = p
+    opt.textContent = p
+    if (p === selected) opt.selected = true
+    sel.appendChild(opt)
+  })
+}
 
-  $('connect-error').textContent = ''
-  $('connect-btn').disabled = true
+function showSidebarMessage(text) {
+  $('table-list').innerHTML = ''
+  const m = $('sidebar-msg')
+  m.textContent = text
+  show(m)
+}
+
+async function init() {
+  populateRegionPicker()
   try {
-    const data = await window.api.connect(cfg)
-    conn.tables = data.tables || []
-    renderTableList()
-    showEmptyState()
-    hide($('connect-screen'))
-    show($('main-screen'))
+    const data = await window.api.listProfiles()
+    conn.profiles = data.profiles || []
+    if (conn.profiles.length === 0) {
+      renderProfileSelect('')
+      showSidebarMessage('No AWS profiles found at ~/.aws/credentials')
+      return
+    }
+    const def = conn.profiles.includes(data.default) ? data.default : conn.profiles[0]
+    renderProfileSelect(def)
+    await discoverInto(def, true)
   } catch (err) {
-    $('connect-error').textContent = err.message
-  } finally {
-    $('connect-btn').disabled = false
+    showSidebarMessage('Failed to load profiles: ' + err.message)
   }
 }
 
-function disconnect() {
-  conn.tables = []
-  conn.tabs = []
-  conn.activeId = null
-  conn.nextId = 1
-  state = null
-  renderTabs()
-  $('grid').querySelector('thead').innerHTML = ''
-  $('grid').querySelector('tbody').innerHTML = ''
-  $('current-table').textContent = ''
-  $('status').textContent = ''
-  $('mode-badge').textContent = ''
-  hide($('filter-panel'))
-  hide($('filter-strategy'))
-  hide($('detail'))
-  hide($('editor'))
-  hideContextMenu()
-  hide($('main-screen'))
-  $('connect-error').textContent = ''
-  show($('connect-screen'))
+async function discoverInto(profile, resetTabs) {
+  conn.profile = profile
+  if (resetTabs) {
+    conn.tabs = []
+    conn.activeId = null
+    state = null
+    hide($('detail')); hide($('editor')); hideContextMenu()
+    showEmptyState(); renderTabs()
+  }
+  const wasExpanded = new Set(conn.regions.filter((r) => r.expanded).map((r) => r.region))
+  showSidebarMessage('Discovering regions…')
+  try {
+    const data = await window.api.discover(profile)
+    conn.regions = (data.regions || []).map((r) => ({
+      region: r.region,
+      tables: r.tables || [],
+      expanded: resetTabs ? false : wasExpanded.has(r.region),
+    }))
+    if (conn.regions.length === 1) conn.regions[0].expanded = true
+    if (conn.regions.length === 0) {
+      showSidebarMessage('No tables found in any region — check this profile’s credentials, then Refresh (⟳)')
+      return
+    }
+    renderSidebar()
+  } catch (err) {
+    showSidebarMessage('Discovery failed: ' + err.message)
+  }
 }
 
-function renderTableList() {
+function renderSidebar() {
+  hide($('sidebar-msg'))
   const filter = $('table-filter').value.toLowerCase()
   const ul = $('table-list')
   ul.innerHTML = ''
-  const activeName = state ? state.currentTable : null
-  const openNames = new Set(conn.tabs.map((t) => t.currentTable))
-  conn.tables
-    .filter((t) => t.toLowerCase().includes(filter))
-    .forEach((t) => {
+  const sep = ' '
+  const activeKey = state ? state.region + sep + state.currentTable : null
+  const openKeys = new Set(conn.tabs.map((t) => t.region + sep + t.currentTable))
+  conn.regions.forEach((rg) => {
+    const matches = rg.tables.filter((t) => t.toLowerCase().includes(filter))
+    if (filter && matches.length === 0) return
+    const expanded = rg.expanded || (filter !== '' && matches.length > 0)
+
+    const head = document.createElement('li')
+    head.className = 'region-head'
+    head.textContent = (expanded ? '▾ ' : '▸ ') + rg.region + ' (' + rg.tables.length + ')'
+    head.addEventListener('click', () => { rg.expanded = !rg.expanded; renderSidebar() })
+    ul.appendChild(head)
+    if (!expanded) return
+
+    matches.forEach((t) => {
       const li = document.createElement('li')
+      li.className = 'table-row'
+      const key = rg.region + sep + t
+      if (key === activeKey) li.classList.add('active')
+      if (openKeys.has(key)) li.classList.add('open')
       li.textContent = t
-      li.className = (t === activeName ? 'active' : '') + (openNames.has(t) ? ' open' : '')
-      li.addEventListener('click', () => openTable(t))
+      li.addEventListener('click', () => openTable(t, rg.region))
       li.addEventListener('contextmenu', (e) => {
         e.preventDefault()
-        showContextMenu(e.clientX, e.clientY, t)
+        showContextMenu(e.clientX, e.clientY, t, rg.region)
       })
       ul.appendChild(li)
     })
-}
-
-async function refreshTables() {
-  const data = await window.api.listTables()
-  conn.tables = data.tables || []
-  renderTableList()
+  })
 }
 
 function pageSize() {
@@ -267,7 +293,7 @@ async function loadPage(tab, reset) {
   try {
     let data
     if (tab.filterActive) {
-      data = await window.api.query(tab.currentTable, {
+      data = await window.api.query(tab.currentTable, tab.region, {
         conditions: activeConditions(tab),
         limit: pageSize(),
         cursor,
@@ -276,7 +302,7 @@ async function loadPage(tab, reset) {
       tab.mode = data.mode || ''
       tab.strategy = { mode: data.mode || '', index: data.index || '' }
     } else {
-      data = await window.api.scan(tab.currentTable, cursor, pageSize())
+      data = await window.api.scan(tab.currentTable, tab.region, cursor, pageSize())
       tab.mode = ''
     }
     if (reset) {
@@ -736,7 +762,7 @@ async function saveEditor() {
   $('editor-error').textContent = ''
   $('editor-save').disabled = true
   try {
-    await window.api.saveItem(state.currentTable, text)
+    await window.api.saveItem(state.currentTable, state.region, text)
     hide($('editor'))
     await loadPage(state, true)
   } catch (err) {
@@ -757,7 +783,7 @@ async function doDelete() {
   if (!state.selectedItem) return
   const json = JSON.stringify(state.selectedItem)
   try {
-    await window.api.deleteItem(state.currentTable, json)
+    await window.api.deleteItem(state.currentTable, state.region, json)
     hide($('detail'))
     await loadPage(state, true)
   } catch (err) {
@@ -774,11 +800,14 @@ function openCreateTable() {
   $('ct-billing').value = 'PAY_PER_REQUEST'
   $('ct-rcu').value = '5'
   $('ct-wcu').value = '5'
+  const defRegion = (state && state.region) || (conn.regions[0] && conn.regions[0].region) || AWS_REGIONS[0]
+  $('ct-region').value = defRegion
   $('ct-error').textContent = ''
   show($('createtable'))
 }
 
 async function submitCreateTable() {
+  const region = $('ct-region').value
   const form = {
     name: $('ct-name').value.trim(),
     pk: $('ct-pk').value.trim(),
@@ -796,9 +825,9 @@ async function submitCreateTable() {
   $('ct-error').textContent = ''
   $('ct-create').disabled = true
   try {
-    await window.api.createTable(form)
+    await window.api.createTable(form, region)
     hide($('createtable'))
-    await refreshTables()
+    await discoverInto(conn.profile, false)
   } catch (err) {
     $('ct-error').textContent = err.message
   } finally {
@@ -807,8 +836,9 @@ async function submitCreateTable() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-  initConnectScreen()
-  $('table-filter').addEventListener('input', renderTableList)
+  $('table-filter').addEventListener('input', renderSidebar)
+  $('profile-select').addEventListener('change', (e) => discoverInto(e.target.value, true))
+  $('refresh-btn').addEventListener('click', () => { if (conn.profile) discoverInto(conn.profile, false) })
   $('schema-btn').addEventListener('click', showSchema)
   $('filter-btn').addEventListener('click', toggleFilter)
   $('filter-add').addEventListener('click', addCondition)
@@ -822,7 +852,6 @@ window.addEventListener('DOMContentLoaded', () => {
   $('detail-copy').addEventListener('click', copyDetail)
   $('new-item-btn').addEventListener('click', openNewItem)
   $('create-table-btn').addEventListener('click', openCreateTable)
-  $('disconnect-btn').addEventListener('click', disconnect)
   $('export-json').addEventListener('click', exportJSON)
   $('export-csv').addEventListener('click', exportCSV)
   $('detail-edit').addEventListener('click', openEditItem)
@@ -834,7 +863,7 @@ window.addEventListener('DOMContentLoaded', () => {
   $('confirm-no').addEventListener('click', () => hide($('confirm')))
   $('confirm-yes').addEventListener('click', doDelete)
   $('ctx-open-new').addEventListener('click', () => {
-    if (ctxTable) openTable(ctxTable, { forceNew: true })
+    if (ctxTarget) openTable(ctxTarget.name, ctxTarget.region, { forceNew: true })
     hideContextMenu()
   })
   document.addEventListener('click', (e) => {
@@ -842,4 +871,5 @@ window.addEventListener('DOMContentLoaded', () => {
   })
   document.addEventListener('scroll', hideContextMenu, true)
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideContextMenu() })
+  init()
 })
