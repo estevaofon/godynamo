@@ -1,0 +1,16 @@
+{
+  "name": "godynamo-cm-vendor",
+  "private": true,
+  "scripts": {
+    "build": "esbuild cm-entry.js --bundle --minify --format=iife --global-name=CM --outfile=codemirror.bundle.js"
+  },
+  "devDependencies": {
+    "@codemirror/state": "^6.4.1",
+    "@codemirror/view": "^6.26.3",
+    "@codemirror/commands": "^6.5.0",
+    "@codemirror/language": "^6.10.1",
+    "@codemirror/lang-json": "^6.0.1",
+    "@lezer/highlight": "^1.2.0",
+    "esbuild": "^0.20.2"
+  }
+}

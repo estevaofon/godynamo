@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8" /><title>CM vendor demo</title>
+<style>
+  body { background:#0b0f1a; color:#c8d3f5; font-family:'Segoe UI',sans-serif; margin:16px; }
+  h3 { color:#7aa2f7; }
+  #ed, #vw { border:1px solid #2a3450; border-radius:6px; margin:8px 0; height:240px; overflow:hidden; display:flex; }
+  #ed .cm-editor, #vw .cm-editor { width:100%; height:100%; }
+  button, input { background:#2a3450; color:#c8d3f5; border:1px solid #2a3450; border-radius:6px; padding:6px; }
+</style></head>
+<body>
+  <h3>Editor — createEditor (fold via gutter or Ctrl-Shift-[ )</h3>
+  <div id="ed"></div>
+  <button id="get">console.log(getValue())</button>
+  <h3>Viewer — createViewer (read-only, foldable)</h3>
+  <input id="q" placeholder="find…" /> <span id="cnt"></span>
+  <div id="vw"></div>
+  <script src="codemirror.bundle.js"></script>
+  <script>
+    const sample = JSON.stringify({
+      id: "u#123", name: "Alice", active: true, score: 42, notes: null,
+      tags: ["a", "b", "c"],
+      address: { city: "NYC", zip: "10001", geo: { lat: 40.7, lng: -74.0 } },
+    }, null, 2)
+    const ed = CM.createEditor({ parent: document.getElementById('ed'), doc: sample })
+    const vw = CM.createViewer({ parent: document.getElementById('vw') }); vw.setValue(sample)
+    document.getElementById('get').onclick = () => console.log(ed.getValue())
+    function findMatches(text, term){ if(!term) return []; const l=text.toLowerCase(),t=term.toLowerCase(),o=[]; let i=0; for(;;){const x=l.indexOf(t,i); if(x<0)break; o.push({from:x,to:x+t.length}); i=x+t.length;} return o }
+    const q = document.getElementById('q')
+    q.oninput = () => { const m = findMatches(sample, q.value); vw.setMatches(m); document.getElementById('cnt').textContent = q.value ? (m.length + ' matches') : '' }
+  </script>
+</body></html>
