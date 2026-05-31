@@ -113,6 +113,11 @@ GoDynamo ships an optional Electron desktop UI for **read-only** browsing
 The desktop GUI is the default (`godynamo`); run `godynamo tui` for the terminal UI.
 `godynamo gui` still works as an explicit alias.
 
+Item JSON (both the detail view and the editor) renders with **syntax highlighting**
+and **collapsible `{…}` / `[…]` blocks** (CodeMirror 6): fold a sub-object to skim a
+large record, or — in the editor — fold then select-and-delete a whole sub-tree in one
+move, the way Dynobase does.
+
 ### Setup (automatic on first run)
 
 The first time you launch the GUI, GoDynamo runs `npm install` in `electron/`

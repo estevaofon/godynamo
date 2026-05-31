@@ -33,6 +33,7 @@ Thumbs.db
 # Electron front-end
 electron/node_modules/
 electron/dist/
+electron/renderer/vendor/codemirror/node_modules/
 
 
 
