@@ -7,7 +7,7 @@
 
 ```sh
 cd electron/renderer/vendor/codemirror
-npm install        # dev-only deps; produces node_modules/ (gitignored)
+npm ci             # dev-only deps from the lockfile (reproducible); node_modules/ is gitignored
 npm run build      # -> codemirror.bundle.js
 ```
 
