@@ -629,9 +629,25 @@ function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+// --- CodeMirror read-only viewer singleton (null if the bundle is absent) ---
+let cmViewer = null
+function getViewer() {
+  if (cmViewer) return cmViewer
+  if (window.CM) { cmViewer = window.CM.createViewer({ parent: $('detail-body') }) }
+  return cmViewer
+}
+
 function renderDetailBody() {
-  const body = $('detail-body')
   const term = $('detail-search').value
+  const v = getViewer()
+  if (v) {                                             // CM path: value set in openDetail; here we only mark
+    const matches = findMatches(state.detailText, term)
+    v.setMatches(matches)
+    $('detail-matches').textContent = term ? (matches.length + (matches.length === 1 ? ' match' : ' matches')) : ''
+    return
+  }
+  // fallback: original <mark> overlay
+  const body = $('detail-body')
   if (!term) {
     body.textContent = state.detailText
     $('detail-matches').textContent = ''
@@ -646,10 +662,7 @@ function renderDetailBody() {
   let count = 0
   while (true) {
     const idx = lower.indexOf(tlower, i)
-    if (idx === -1) {
-      result += escaped.slice(i)
-      break
-    }
+    if (idx === -1) { result += escaped.slice(i); break }
     result += escaped.slice(i, idx) + '<mark>' + escaped.slice(idx, idx + escTerm.length) + '</mark>'
     i = idx + escTerm.length
     count++
@@ -662,6 +675,9 @@ function openDetail(title, text, withEditDelete) {
   state.detailText = text
   $('detail-title').textContent = title
   $('detail-search').value = ''
+  show($('detail'))                                    // show first so CM mounts visible
+  const v = getViewer()
+  if (v) v.setValue(text)
   renderDetailBody()
   if (withEditDelete) {
     show($('detail-edit'))
@@ -670,7 +686,6 @@ function openDetail(title, text, withEditDelete) {
     hide($('detail-edit'))
     hide($('detail-delete'))
   }
-  show($('detail'))
 }
 
 function showItem(idx) {
