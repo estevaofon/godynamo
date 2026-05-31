@@ -730,29 +730,56 @@ async function exportCSV() {
   }
 }
 
+// --- CodeMirror editor singleton (falls back to a <textarea> if the bundle is absent) ---
+let cmEditor = null
+let editorFallback = null
+function getEditor() {
+  if (cmEditor) return cmEditor
+  if (window.CM) { cmEditor = window.CM.createEditor({ parent: $('editor-cm'), doc: '' }) }
+  return cmEditor
+}
+function fallbackEditor() {
+  if (!editorFallback) {
+    editorFallback = document.createElement('textarea')
+    editorFallback.id = 'editor-text'
+    editorFallback.spellcheck = false
+    $('editor-cm').appendChild(editorFallback)
+  }
+  return editorFallback
+}
+function setEditorValue(s) {
+  const ed = getEditor()
+  if (ed) ed.setValue(s); else fallbackEditor().value = s
+}
+function getEditorValue() {
+  const ed = getEditor()
+  return ed ? ed.getValue() : fallbackEditor().value
+}
+function focusEditor() {
+  const ed = getEditor()
+  if (ed) ed.focus(); else fallbackEditor().focus()
+}
+
 function openNewItem() {
-  const tmpl = {}
-  if (state.keys.partition) tmpl[state.keys.partition] = ''
-  if (state.keys.sort) tmpl[state.keys.sort] = ''
   $('editor-title').textContent = 'New item'
-  $('editor-text').value = JSON.stringify(tmpl, null, 2)
   $('editor-error').textContent = ''
-  show($('editor'))
-  $('editor-text').focus()
+  show($('editor'))                                    // show first so CM mounts visible
+  setEditorValue(JSON.stringify(buildItemTemplate(state.keys), null, 2))
+  focusEditor()
 }
 
 function openEditItem() {
   if (!state.selectedItem) return
   $('editor-title').textContent = 'Edit item'
-  $('editor-text').value = JSON.stringify(state.selectedItem, null, 2)
   $('editor-error').textContent = ''
   hide($('detail'))
-  show($('editor'))
-  $('editor-text').focus()
+  show($('editor'))                                    // show first so CM mounts visible
+  setEditorValue(JSON.stringify(state.selectedItem, null, 2))
+  focusEditor()
 }
 
 async function saveEditor() {
-  const text = $('editor-text').value
+  const text = getEditorValue()
   try {
     JSON.parse(text)
   } catch (e) {

@@ -78,7 +78,7 @@
         <span id="editor-title"></span>
         <button id="editor-close">✕</button>
       </header>
-      <textarea id="editor-text" spellcheck="false"></textarea>
+      <div id="editor-cm"></div>
       <p id="editor-error" class="error"></p>
       <div class="modal-actions">
         <button id="editor-save">Save</button>
@@ -134,6 +134,8 @@
 
   <datalist id="attr-suggestions"></datalist>
 
+  <script src="helpers.js"></script>
+  <script src="vendor/codemirror/codemirror.bundle.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
