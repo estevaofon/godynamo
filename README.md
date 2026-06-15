@@ -130,6 +130,56 @@ npm install
 cd ..
 ```
 
+### Linux / Ubuntu notes
+
+On Linux two extra steps may be needed after `npm install` (both confirmed on
+Ubuntu with Node.js 24):
+
+**1. Electron binary fails to extract (`ENOENT … path.txt`).**
+On recent Node.js (e.g. v24), Electron's bundled `extract-zip` postinstall can
+fail silently — it extracts only `locales/` and exits 0 without writing
+`path.txt`, so launching errors with:
+
+```
+Error: ENOENT: no such file or directory, open '.../electron/node_modules/electron/dist/path.txt'
+```
+
+The downloaded zip itself is fine; only the extraction is broken. Extract it
+manually with the system `unzip` and create `path.txt`:
+
+```bash
+cd electron/node_modules/electron
+ZIP="$HOME/.cache/electron/"*"/electron-v$(node -p "require('./package').version")-linux-x64.zip"
+rm -rf dist path.txt
+mkdir -p dist
+unzip -q $ZIP -d dist
+[ -f dist/electron.d.ts ] && mv -f dist/electron.d.ts ./electron.d.ts
+printf 'electron' > path.txt
+chmod +x dist/electron
+cd ../../..
+```
+
+> If `~/.cache/electron/.../*.zip` is missing (or was truncated by a dropped
+> connection / VPN), delete `~/.cache/electron` and run `npm install` again to
+> re-download before extracting.
+
+**2. `chrome-sandbox` must be setuid root.**
+Electron's Chromium sandbox aborts unless its helper binary is owned by root
+with mode `4755`:
+
+```
+The SUID sandbox helper binary was found, but is not configured correctly. … aborting now.
+```
+
+Fix it once (re-run after any Electron reinstall):
+
+```bash
+sudo chown root:root electron/node_modules/electron/dist/chrome-sandbox
+sudo chmod 4755 electron/node_modules/electron/dist/chrome-sandbox
+```
+
+After both steps, `./godynamo` opens the Electron window normally.
+
 ### Launch
 
 ```bash
