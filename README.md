@@ -10,6 +10,10 @@ Built with Go and [Charm](https://charm.sh/) libraries. Free and open source alt
 
 ---
 
+### Godynamo GUI
+<img width="1341" height="680" alt="godynamo-gui" src="https://github.com/user-attachments/assets/1d815349-6ae4-4e28-af4c-e0b87f336cff" />
+
+### Godynamo TUI
 https://github.com/user-attachments/assets/e53d2026-f4e7-4976-bf72-fa64edf743a1
 
 ## ✨ Features
