@@ -227,23 +227,6 @@ GoDynamo uses AWS SDK v2 and supports all standard authentication methods:
 
 ---
 
-## 🏗️ Building
-
-```bash
-# Development
-go run .
-
-# Production build (smaller binary)
-go build -ldflags="-s -w" -o godynamo .
-
-# Cross-compile
-GOOS=linux GOARCH=amd64 go build -o godynamo-linux .
-GOOS=darwin GOARCH=amd64 go build -o godynamo-darwin .
-GOOS=windows GOARCH=amd64 go build -o godynamo.exe .
-```
-
----
-
 ## 📦 Dependencies
 
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
