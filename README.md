@@ -63,12 +63,6 @@ go build -o godynamo .
 ./godynamo
 ```
 
-### Go Install
-
-```bash
-go install github.com/yourusername/godynamo@latest
-```
-
 ---
 
 ## 🚀 Quick Start
