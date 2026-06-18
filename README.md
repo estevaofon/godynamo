@@ -54,22 +54,6 @@ https://github.com/user-attachments/assets/e53d2026-f4e7-4976-bf72-fa64edf743a1
 
 ## 📦 Installation
 
-### Pre-built Binaries
-
-Download from [Releases](https://github.com/yourusername/godynamo/releases):
-
-```bash
-# Linux
-curl -L https://github.com/yourusername/godynamo/releases/latest/download/godynamo-linux-amd64 -o godynamo
-chmod +x godynamo
-
-# macOS
-curl -L https://github.com/yourusername/godynamo/releases/latest/download/godynamo-darwin-amd64 -o godynamo
-chmod +x godynamo
-
-# Windows - download godynamo-windows-amd64.exe
-```
-
 ### From Source
 
 ```bash
