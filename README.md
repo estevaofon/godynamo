@@ -90,13 +90,13 @@ GoDynamo installs them automatically (showing a wait window) and then opens.
 
 ## 🖥️ Desktop GUI (default)
 
-GoDynamo ships an Electron desktop UI that is **the default interface on Windows
-and Linux/Ubuntu** — running `godynamo` (no arguments) opens it. It is at full
-feature parity with the terminal UI: connect (AWS region or DynamoDB Local), list
-tables, scan/browse, the visual filter builder, view item JSON and schema,
-create / edit / delete items, create tables, export to JSON/CSV, copy values, and
-in-item JSON search. Run `godynamo tui` for the terminal UI; `godynamo gui` is an
-explicit alias for the default.
+GoDynamo's desktop UI (Electron) is the default interface — running `godynamo`
+(no arguments) opens it. Use `godynamo tui` for the terminal UI (`godynamo gui`
+is an explicit alias for the default).
+
+On **Windows** the Electron runtime is downloaded and installed automatically on
+first launch — no extra steps. On **Ubuntu / Linux** a few manual adjustments are
+required after install; see the [Linux / Ubuntu notes](#linux--ubuntu-notes) below.
 
 Item JSON (both the detail view and the editor) renders with **syntax highlighting**
 and **collapsible `{…}` / `[…]` blocks** (CodeMirror 6): fold a sub-object to skim a
@@ -180,9 +180,9 @@ On launch you choose **AWS** (pick a region; uses your default credentials) or
 a loopback-only HTTP bridge (127.0.0.1, random port, one-time token) and opens the
 Electron window; closing the window shuts everything down.
 
-> Status: at full feature parity with the terminal UI (filtering, CRUD,
-> create-table, export, copy, in-item JSON search). Packaged installers are the
-> main remaining item, planned for a later phase.
+> Status: packaged installers (which would bundle the Electron runtime) are
+> planned for a later phase; for now the GUI runs from source and needs
+> **Node.js + npm** on your PATH.
 
 ---
 
